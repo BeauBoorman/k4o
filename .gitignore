@@ -1,3 +1,6 @@
+.freebuff/
 .zig-cache/
 zig-out/
+zig-out-musl/
 *.o
+.DS_Store
