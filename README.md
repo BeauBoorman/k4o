@@ -1,5 +1,7 @@
 # knap-textile
 
+[![CI](https://github.com/drawmeanelephant/k4o/actions/workflows/ci.yml/badge.svg)](https://github.com/drawmeanelephant/k4o/actions/workflows/ci.yml)
+
 A Knap template engine that emits Textile.
 
 Knap (Obsidian's template language) turns data into Markdown. knap-textile
