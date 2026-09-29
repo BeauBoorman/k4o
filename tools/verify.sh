@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# knap-textile verification script.
+# k4o verification script.
 #
 # Runs locally and in CI (the `verify` job runs it with --check-readme).
 # It resolves the repo root from its own location.
@@ -43,7 +43,7 @@ esac
 cd "$(dirname "$0")/.." || exit 2
 REPO="$PWD"
 ZIG="${ZIG:-zig}"
-VERIFY_DIR="${KT_VERIFY_DIR:-${TMPDIR:-/tmp}/knap-textile-verify-$$}"
+VERIFY_DIR="${KT_VERIFY_DIR:-${TMPDIR:-/tmp}/k4o-verify-$$}"
 mkdir -p "$VERIFY_DIR"
 
 pass_count=0
@@ -142,7 +142,7 @@ check_cli_stderr() { # desc, logbase, needle, cmd... (expects non-zero, empty st
   fi
 }
 
-BIN="$REPO/zig-out/bin/knap-textile"
+BIN="$REPO/zig-out/bin/k4o"
 
 check_zero "zig build" "$VERIFY_DIR/01-build.log" "$ZIG" build
 check_zero_tests "zig build test (normal: all pass)" "$VERIFY_DIR/02-test.log" \
@@ -201,7 +201,7 @@ check_zero "--help exits 0" "$VERIFY_DIR/12-help.log" "$BIN" --help
 check_zero "--version exits 0" "$VERIFY_DIR/13-version.log" "$BIN" --version
 
 check_zero "static x86_64-linux-musl build is statically linked" "$VERIFY_DIR/14-static.log" \
-  bash -c "'$ZIG' build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-musl --prefix '$VERIFY_DIR/static' && file '$VERIFY_DIR/static/bin/knap-textile' | grep -q 'statically linked'"
+  bash -c "'$ZIG' build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-musl --prefix '$VERIFY_DIR/static' && file '$VERIFY_DIR/static/bin/k4o' | grep -q 'statically linked'"
 
 # ---- README results table -------------------------------------------------
 # The three engine modes yield a short results table. It is generated from this
@@ -294,7 +294,7 @@ if [ "$MODE" != verify ]; then
 fi
 
 note "-------------------------------------------"
-note "knap-textile verify: $pass_count passed, $fail_count failed"
+note "k4o verify: $pass_count passed, $fail_count failed"
 note "logs kept under: $VERIFY_DIR"
 if [ "$fail_count" -ne 0 ]; then
   exit 1

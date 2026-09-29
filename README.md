@@ -1,10 +1,13 @@
-# knap-textile
+# k4o
 
 [![CI](https://github.com/drawmeanelephant/k4o/actions/workflows/ci.yml/badge.svg)](https://github.com/drawmeanelephant/k4o/actions/workflows/ci.yml)
 
 A Knap template engine that emits Textile.
 
-Knap (Obsidian's template language) turns data into Markdown. knap-textile
+The name is a nod: *Knap for Oliver* — Oliver being the sibling project that
+parses the Textile this emits. Short name, plain job.
+
+Knap (Obsidian's template language) turns data into Markdown. k4o
 turns data into Textile instead — template plus JSON in, Textile bytes out,
 ready for a Textile parser (the sibling
 [Oliver](https://github.com/drawmeanelephant) project renders the result).
@@ -14,7 +17,7 @@ static binary — no npm, no network, no dependency on the official knap
 package.
 
 ```text
-template.knap + data.json ──> knap-textile ──> Textile bytes ──> a Textile parser ──> HTML
+template.knap + data.json ──> k4o ──> Textile bytes ──> a Textile parser ──> HTML
 ```
 
 ## Build, run, test
@@ -22,16 +25,16 @@ template.knap + data.json ──> knap-textile ──> Textile bytes ──> a T
 Requires Zig 0.16.0.
 
 ```sh
-zig build                       # binary -> zig-out/bin/knap-textile
+zig build                       # binary -> zig-out/bin/k4o
 zig build test                  # full suite: fixture corpus + unit tests
 tools/verify.sh                 # build + tests + red-green mutants + CLI smoke + static check
 ```
 
 ```sh
-zig-out/bin/knap-textile render template.knap --data data.json
-zig-out/bin/knap-textile render template.knap --data=data.json
-zig-out/bin/knap-textile --help
-zig-out/bin/knap-textile --version
+zig-out/bin/k4o render template.knap --data data.json
+zig-out/bin/k4o render template.knap --data=data.json
+zig-out/bin/k4o --help
+zig-out/bin/k4o --version
 ```
 
 - `render` writes the rendered Textile to stdout, exit 0. No trailing newline
@@ -166,7 +169,7 @@ The CLI bounds this with an output cap, default 256 MiB, that fails with a
 diagnostic naming the loop depth rather than exhausting memory:
 
 ```sh
-knap-textile render t.knap --data d.json --max-output=64m
+k4o render t.knap --data d.json --max-output=64m
 ```
 
 `--max-output` accepts plain bytes or a `k`/`m`/`g` suffix, in both
