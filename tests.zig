@@ -42,6 +42,8 @@ const cases = [_]Case{
     .{ .name = "filter-blockquote-basic", .template = @embedFile("fixtures/filter-blockquote-basic.knap"), .data = @embedFile("fixtures/filter-blockquote-basic.json"), .expected = @embedFile("fixtures/filter-blockquote-basic.textile") },
     .{ .name = "filter-codeblock-basic", .template = @embedFile("fixtures/filter-codeblock-basic.knap"), .data = @embedFile("fixtures/filter-codeblock-basic.json"), .expected = @embedFile("fixtures/filter-codeblock-basic.textile") },
     .{ .name = "filter-link-basic", .template = @embedFile("fixtures/filter-link-basic.knap"), .data = @embedFile("fixtures/filter-link-basic.json"), .expected = @embedFile("fixtures/filter-link-basic.textile") },
+    .{ .name = "filter-link-data-arg", .template = @embedFile("fixtures/filter-link-data-arg.knap"), .data = @embedFile("fixtures/filter-link-data-arg.json"), .expected = @embedFile("fixtures/filter-link-data-arg.textile") },
+    .{ .name = "filter-link-literal-arg", .template = @embedFile("fixtures/filter-link-literal-arg.knap"), .data = @embedFile("fixtures/filter-link-literal-arg.json"), .expected = @embedFile("fixtures/filter-link-literal-arg.textile") },
     .{ .name = "filter-list-basic", .template = @embedFile("fixtures/filter-list-basic.knap"), .data = @embedFile("fixtures/filter-list-basic.json"), .expected = @embedFile("fixtures/filter-list-basic.textile") },
     .{ .name = "filter-list-nested", .template = @embedFile("fixtures/filter-list-nested.knap"), .data = @embedFile("fixtures/filter-list-nested.json"), .expected = @embedFile("fixtures/filter-list-nested.textile") },
     .{ .name = "filter-numbered-basic", .template = @embedFile("fixtures/filter-numbered-basic.knap"), .data = @embedFile("fixtures/filter-numbered-basic.json"), .expected = @embedFile("fixtures/filter-numbered-basic.textile") },
@@ -89,6 +91,10 @@ const error_cases = [_]ErrorCase{
     .{ .name = "err-unknown-filter", .template = @embedFile("fixtures/errors/err-unknown-filter.knap"), .message = @embedFile("fixtures/errors/err-unknown-filter.error") },
     .{ .name = "err-bad-args-extra", .template = @embedFile("fixtures/errors/err-bad-args-extra.knap"), .message = @embedFile("fixtures/errors/err-bad-args-extra.error") },
     .{ .name = "err-bad-args-link-missing", .template = @embedFile("fixtures/errors/err-bad-args-link-missing.knap"), .message = @embedFile("fixtures/errors/err-bad-args-link-missing.error") },
+    .{ .name = "err-link-scheme-javascript", .template = @embedFile("fixtures/errors/err-link-scheme-javascript.knap"), .message = @embedFile("fixtures/errors/err-link-scheme-javascript.error") },
+    .{ .name = "err-link-scheme-from-data", .template = @embedFile("fixtures/errors/err-link-scheme-from-data.knap"), .data = @embedFile("fixtures/errors/err-link-scheme-from-data.json"), .message = @embedFile("fixtures/errors/err-link-scheme-from-data.error") },
+    .{ .name = "err-link-scheme-data", .template = @embedFile("fixtures/errors/err-link-scheme-data.knap"), .message = @embedFile("fixtures/errors/err-link-scheme-data.error") },
+    .{ .name = "err-arg-resolves-to-object", .template = @embedFile("fixtures/errors/err-arg-resolves-to-object.knap"), .data = @embedFile("fixtures/errors/err-arg-resolves-to-object.json"), .message = @embedFile("fixtures/errors/err-arg-resolves-to-object.error") },
     .{ .name = "err-multiline-bold", .template = @embedFile("fixtures/errors/err-multiline-bold.knap"), .data = @embedFile("fixtures/errors/err-multiline-bold.json"), .message = @embedFile("fixtures/errors/err-multiline-bold.error") },
     .{ .name = "err-ragged-table", .template = @embedFile("fixtures/errors/err-ragged-table.knap"), .data = @embedFile("fixtures/errors/err-ragged-table.json"), .message = @embedFile("fixtures/errors/err-ragged-table.error") },
     .{ .name = "err-deep-list", .template = @embedFile("fixtures/errors/err-deep-list.knap"), .data = @embedFile("fixtures/errors/err-deep-list.json"), .message = @embedFile("fixtures/errors/err-deep-list.error") },
@@ -126,6 +132,50 @@ fn renderErr(template: []const u8, data_json: []const u8, needle: []const u8) !v
     defer arena_state.deinit();
     var d = kt.Diagnostic{};
     const res = renderCase(arena_state.allocator(), template, data_json, &d);
+    if (res) |out| {
+        std.debug.print("expected error, got output:\n{s}\n", .{out});
+        return error.TestExpectedError;
+    } else |e| {
+        if (e != error.Template) {
+            std.debug.print("expected error.Template, got {s}\n", .{@errorName(e)});
+            return e;
+        }
+    }
+    if (std.mem.indexOf(u8, d.message, needle) == null) {
+        std.debug.print("message mismatch\n--- wanted (substring) ---\n{s}\n--- got ---\n{s}\n", .{ needle, d.message });
+        return error.TestUnexpectedResult;
+    }
+    try assertTextileDialect();
+}
+
+fn renderLimit(
+    template: []const u8,
+    data_json: []const u8,
+    max: usize,
+    d: *kt.Diagnostic,
+    arena: std.mem.Allocator,
+) ![]const u8 {
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, data_json, .{});
+    return kt.renderWithLimit(arena, template, parsed, d, max);
+}
+
+fn renderLimitOk(template: []const u8, data_json: []const u8, max: usize, expected: []const u8) !void {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    var d = kt.Diagnostic{};
+    const out = try renderLimit(template, data_json, max, &d, arena_state.allocator());
+    testing.expectEqualStrings(expected, out) catch |e| {
+        std.debug.print("render mismatch\n--- expected ---\n{s}\n--- actual ---\n{s}\n---\n", .{ expected, out });
+        return e;
+    };
+    try assertTextileDialect();
+}
+
+fn renderLimitErr(template: []const u8, data_json: []const u8, max: usize, needle: []const u8) !void {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    var d = kt.Diagnostic{};
+    const res = renderLimit(template, data_json, max, &d, arena_state.allocator());
     if (res) |out| {
         std.debug.print("expected error, got output:\n{s}\n", .{out});
         return error.TestExpectedError;
@@ -336,6 +386,75 @@ test "unit: float and integer rendering" {
 
 test "unit: three-filter chain" {
     try renderOk("{{ \"n\" | code | bold | h2 }}", "{}", "h2. *@n@*");
+}
+
+test "unit: a bare filter argument falls back to the literal" {
+    // No such key in the data root, so `missing` stays the word.
+    try renderOk("{{ \"x\" | link:missing }}", "{}", "\"x\":missing");
+}
+
+test "unit: bare filter arguments render scalar data values" {
+    try renderOk("{{ \"x\" | link:n }}", "{\"n\":42}", "\"x\":42");
+    try renderOk("{{ \"x\" | link:b }}", "{\"b\":true}", "\"x\":true");
+    try renderOk("{{ \"x\" | link:s }}", "{\"s\":\"https://y/\"}", "\"x\":https://y/");
+}
+
+test "unit: a non-text filter argument is a bad argument" {
+    try renderErr("{{ \"x\" | link:obj }}", "{\"obj\":{\"k\":1}}", "filter arguments must be text");
+    try renderErr("{{ \"x\" | link:u }}", "{\"u\":null}", "filter arguments must be text");
+}
+
+test "unit: navigational and relative link URLs stay allowed" {
+    try renderOk("{{ \"x\" | link:\"mailto:a@b.c\" }}", "{}", "\"x\":mailto:a@b.c");
+    try renderOk("{{ \"x\" | link:\"file:///etc/passwd\" }}", "{}", "\"x\":file:///etc/passwd");
+    try renderOk("{{ \"x\" | link:\"../notes/page.html\" }}", "{}", "\"x\":../notes/page.html");
+    // A colon that is not a well-formed scheme belongs to the path.
+    try renderOk("{{ \"x\" | link:\"a/b:c\" }}", "{}", "\"x\":a/b:c");
+}
+
+test "unit: blocked link schemes are rejected case-insensitively" {
+    for ([_][]const u8{ "javascript:alert(1)", "JavaScript:alert(1)", "JAVASCRIPT:alert(1)", "vbscript:m", "data:text/html,x" }) |url| {
+        var buf: [128]u8 = undefined;
+        // `{{{{` / `}}}}` because std.fmt treats doubled braces as escapes.
+        const tpl = try std.fmt.bufPrint(&buf, "{{{{ \"x\" | link:\"{s}\" }}}}", .{url});
+        try renderErr(tpl, "{}", "which can execute script");
+    }
+}
+
+test "unit: a blocked scheme reaching link through the data is rejected" {
+    try renderErr("{{ name | link:url }}", "{\"name\":\"c\",\"url\":\"javascript:alert(1)\"}", "which can execute script");
+}
+
+test "unit: nested loops that would multiply hit the output cap" {
+    // 20 * 20 = 400 one-byte iterations, so a 100-byte cap must trip.
+    const tpl = "{% for x in a %}{% for y in a %}x{% endfor %}{% endfor %}";
+    try renderLimitErr(
+        tpl,
+        "{\"a\":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]}",
+        100,
+        "output exceeded the 100 byte limit at loop depth 2",
+    );
+}
+
+test "unit: the output cap is an exact ceiling" {
+    try renderLimitOk("{{ s }}", "{\"s\":\"hello\"}", 5, "hello");
+    try renderLimitErr("{{ s }}", "{\"s\":\"hello\"}", 4, "output exceeded the 4 byte limit");
+}
+
+test "unit: a zero output limit disables the cap" {
+    try renderLimitOk("{{ s }}", "{\"s\":\"hello\"}", 0, "hello");
+}
+
+test "unit: structured values are charged against the output cap" {
+    // `{{ data }}` emits compact JSON through a separate write path; it must
+    // still be charged, or the cap has a hole.
+    try renderLimitOk("{{ data }}", "{\"data\":{\"k\":1}}", 100, "{\"k\":1}");
+    try renderLimitErr("{{ data }}", "{\"data\":{\"k\":1}}", 4, "output exceeded the 4 byte limit");
+}
+
+test "unit: the output cap does not fire on ordinary renders" {
+    // The default cap is generous; every corpus-sized render must clear it.
+    try testing.expect(kt.default_max_output > 1024 * 1024);
 }
 
 test "unit: spaced names are not valid condition operands" {
