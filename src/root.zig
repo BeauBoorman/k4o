@@ -1,8 +1,8 @@
-//! knap-textile: a Knap template engine that emits Textile.
+//! k4o: a Knap template engine that emits Textile.
 //!
 //! Public API surface:
 //!
-//!     const kt = @import("knap_textile");
+//!     const kt = @import("k4o");
 //!
 //!     var d: kt.Diagnostic = .{};
 //!     const out = try kt.render(arena, template_bytes, json_value, &d);

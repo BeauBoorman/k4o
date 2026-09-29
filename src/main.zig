@@ -1,26 +1,26 @@
-//! knap-textile CLI.
+//! k4o CLI.
 //!
-//!     knap-textile render <template.knap> [--data <data.json>]
-//!     knap-textile --help
-//!     knap-textile --version
+//!     k4o render <template.knap> [--data <data.json>]
+//!     k4o --help
+//!     k4o --version
 //!
 //! Exit codes: 0 = success, 1 = any error. On error the message goes to
 //! stderr and stdout stays empty — rendering is buffered, so partially
 //! rendered output is never emitted.
 
 const std = @import("std");
-const kt = @import("knap_textile");
+const kt = @import("k4o");
 const build_options = @import("build_options");
 
 const max_input = 16 * 1024 * 1024;
 
 const usage_text =
-    \\knap-textile — a Knap template engine that emits Textile.
+    \\k4o — a Knap template engine that emits Textile.
     \\
     \\Usage:
-    \\  knap-textile render <template.knap> [--data <data.json>]
-    \\  knap-textile --help
-    \\  knap-textile --version
+    \\  k4o render <template.knap> [--data <data.json>]
+    \\  k4o --help
+    \\  k4o --version
     \\
     \\Options:
     \\  --data, -d <file>   JSON object with the template variables
@@ -56,7 +56,7 @@ pub fn main(init: std.process.Init) !u8 {
     }
     if (std.mem.eql(u8, first, "--version") or std.mem.eql(u8, first, "-v")) {
         var buf: [64]u8 = undefined;
-        const text = try std.fmt.bufPrint(&buf, "knap-textile {s}\n", .{build_options.version});
+        const text = try std.fmt.bufPrint(&buf, "k4o {s}\n", .{build_options.version});
         try printStdout(init, text);
         return 0;
     }
@@ -189,10 +189,10 @@ fn printStdout(init: std.process.Init, text: []const u8) !void {
 fn usage(init: std.process.Init, msg: []const u8) u8 {
     _ = init;
     report("{s}", .{msg});
-    report("usage: knap-textile render <template.knap> [--data <data.json>]  (see --help)", .{});
+    report("usage: k4o render <template.knap> [--data <data.json>]  (see --help)", .{});
     return 1;
 }
 
 fn report(comptime fmt: []const u8, args: anytype) void {
-    std.debug.print("knap-textile: " ++ fmt ++ "\n", args);
+    std.debug.print("k4o: " ++ fmt ++ "\n", args);
 }

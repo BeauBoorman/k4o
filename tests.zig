@@ -1,4 +1,4 @@
-//! knap-textile test suite.
+//! k4o test suite.
 //!
 //! 1. Fixture corpus (`fixtures/*.knap` + `.json` + `.textile`), byte-exact.
 //! 2. Error corpus (`fixtures/errors/*.knap` + `.error`), message-checked.
@@ -11,7 +11,7 @@
 //! The three `examples/*` artifacts are part of the corpus (`ex-*`).
 
 const std = @import("std");
-const kt = @import("knap_textile");
+const kt = @import("k4o");
 const testing = std.testing;
 
 const Case = struct {

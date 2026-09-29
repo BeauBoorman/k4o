@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) void {
     build_options.addOption([]const u8, "version", packageVersion(b));
     const build_options_mod = build_options.createModule();
 
-    const engine_mod = b.addModule("knap_textile", .{
+    const engine_mod = b.addModule("k4o", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
@@ -36,13 +36,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "knap_textile", .module = engine_mod },
+            .{ .name = "k4o", .module = engine_mod },
             .{ .name = "build_options", .module = build_options_mod },
         },
     });
 
     const exe = b.addExecutable(.{
-        .name = "knap-textile",
+        .name = "k4o",
         .root_module = cli_mod,
     });
     b.installArtifact(exe);
@@ -52,7 +52,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "knap_textile", .module = engine_mod },
+            .{ .name = "k4o", .module = engine_mod },
         },
     });
     const tests = b.addTest(.{
