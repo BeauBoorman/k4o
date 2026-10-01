@@ -43,6 +43,7 @@ class Tags(HTMLParser):
         self.code_contents = []
         self.list_item_contents = []
         self.list_item_depths = []
+        self.list_item_parents = []
         self._list_depth = 0
         self._items = []
         self._code = None
@@ -52,6 +53,7 @@ class Tags(HTMLParser):
         if tag in {"ul", "ol"}:
             self._list_depth += 1
         if tag == "li":
+            self.list_item_parents.append(self._items[-1] if self._items else None)
             self._items.append(len(self.list_item_contents))
             self.list_item_contents.append("")
             self.list_item_depths.append(self._list_depth)
@@ -314,6 +316,49 @@ def run(k4o, knap, oliver):
                     f"{name}: item text changed: expected {contents!r}, got {actual!r}"
                 )
                 checks += 1
+        # Marker widths are structural, not knap tab-byte parity. Check the
+        # actual parent of every item across one-, two-, and three-digit
+        # parents, including all combinations at the third supported level.
+        numbered_widths = []
+        for parent_number in [9, 10, 100]:
+            parents = [f"parent {number}" for number in range(1, parent_number + 1)]
+            numbered_widths.append((
+                f"numbered-width-{parent_number}",
+                parents + [["child"], "parent sibling"],
+                parents + ["child", "parent sibling"],
+                [None] * parent_number + [parent_number - 1, None],
+            ))
+            for child_number in [9, 10, 100]:
+                children = [f"child {number}" for number in range(1, child_number + 1)]
+                numbered_widths.append((
+                    f"numbered-width-{parent_number}-{child_number}",
+                    parents + [children + [["grandchild"], "child sibling"], "parent sibling"],
+                    parents + children + ["grandchild", "child sibling", "parent sibling"],
+                    [None] * parent_number + [parent_number - 1] * child_number
+                    + [parent_number + child_number - 1, parent_number - 1, None],
+                ))
+        for name, items, contents, parents in numbered_widths:
+            path = directory / "case.knap"
+            json_path = directory / "data.json"
+            path.write_text("{{ items | numbered }}")
+            json_path.write_text(json.dumps({"items": items}))
+            ours = invoke([k4o, "render", str(path), "--data", str(json_path), "--format", "markdown"])
+            gfm = invoke([k4o, "render", str(path), "--data", str(json_path), "--format", "gfm"])
+            check_result(ours, f"k4o {name}", "ok")
+            check_result(gfm, f"k4o GFM {name}", "ok")
+            assert gfm.stdout == ours.stdout, f"{name}: GFM changed non-table output"
+            html = check_commonmark(name, ours.stdout, oliver, "ol")
+            tags = Tags()
+            tags.feed(html)
+            assert set(tags.names) <= {"ol", "li"}, f"{name}: unexpected list node: {html!r}"
+            assert tags.list_item_parents == parents, (
+                f"{name}: incorrect parent/child structure: expected {parents}, got {tags.list_item_parents}"
+            )
+            actual = [text.strip() for text in tags.list_item_contents]
+            assert actual == contents, (
+                f"{name}: item text changed: expected {contents!r}, got {actual!r}"
+            )
+            checks += 1
         # Check parsed code content, not just the presence of a <code> tag.
         # All-space spans remain code (knap emits plain whitespace); neither
         # boundary spaces nor repeated terminal newlines are trimmed for parity.
