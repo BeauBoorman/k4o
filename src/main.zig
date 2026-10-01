@@ -1,6 +1,6 @@
 //! k4o CLI.
 //!
-//!     k4o render <template.knap> [--data <data.json>]
+//!     k4o render <template.knap> [--data <data.json>] [--format textile|markdown]
 //!     k4o --help
 //!     k4o --version
 //!
@@ -15,10 +15,10 @@ const build_options = @import("build_options");
 const max_input = 16 * 1024 * 1024;
 
 const usage_text =
-    \\k4o — a Knap template engine that emits Textile.
+    \\k4o — a Knap template engine that emits Textile or CommonMark.
     \\
     \\Usage:
-    \\  k4o render <template.knap> [--data <data.json>]
+    \\  k4o render <template.knap> [--data <data.json>] [--format textile|markdown]
     \\  k4o --help
     \\  k4o --version
     \\
@@ -26,6 +26,8 @@ const usage_text =
     \\  --data, -d <file>   JSON object with the template variables
     \\                      (optional; defaults to {}). The --data=<file>
     \\                      form is also accepted.
+    \\  --format <format>   Output format: textile (default) or markdown.
+    \\                      The --format=<format> form is also accepted.
     \\  --max-output, -m <bytes>
     \\                      Ceiling on rendered output, in bytes. Nested
     \\                      loops multiply, so a small template over modest
@@ -66,6 +68,8 @@ pub fn main(init: std.process.Init) !u8 {
     var template_path: ?[]const u8 = null;
     var data_path: ?[]const u8 = null;
     var max_output: usize = kt.default_max_output;
+    var format: kt.Format = .textile;
+    var seen_format = false;
     var i: usize = 1;
     while (i < args.items.len) : (i += 1) {
         const arg = args.items[i];
@@ -84,6 +88,16 @@ pub fn main(init: std.process.Init) !u8 {
             if (value.len == 0) return usage(init, "missing value for --data");
             if (data_path != null) return usage(init, "duplicate --data");
             data_path = value;
+        } else if (std.mem.eql(u8, arg, "--format")) {
+            i += 1;
+            if (i >= args.items.len) return usage(init, "missing value for --format");
+            if (seen_format) return usage(init, "duplicate --format");
+            format = parseFormat(args.items[i]) orelse return usage(init, "invalid --format: expected textile or markdown");
+            seen_format = true;
+        } else if (std.mem.startsWith(u8, arg, "--format=")) {
+            if (seen_format) return usage(init, "duplicate --format");
+            format = parseFormat(arg["--format=".len..]) orelse return usage(init, "invalid --format: expected textile or markdown");
+            seen_format = true;
         } else if (std.mem.eql(u8, arg, "--max-output") or std.mem.eql(u8, arg, "-m")) {
             i += 1;
             if (i >= args.items.len) return usage(init, "missing value for --max-output");
@@ -132,7 +146,7 @@ pub fn main(init: std.process.Init) !u8 {
     }
 
     var d = kt.Diagnostic{};
-    const out = kt.renderWithLimit(arena, template, root, &d, max_output) catch |e| switch (e) {
+    const out = kt.renderFormatWithLimit(arena, template, root, &d, format, max_output) catch |e| switch (e) {
         error.Template => {
             report("{s}", .{if (d.message.len > 0) d.message else "template error"});
             return 1;
@@ -150,6 +164,12 @@ pub fn main(init: std.process.Init) !u8 {
     w.interface.writeAll(out) catch return 1;
     w.flush() catch return 1;
     return 0;
+}
+
+fn parseFormat(name: []const u8) ?kt.Format {
+    if (std.mem.eql(u8, name, "textile")) return .textile;
+    if (std.mem.eql(u8, name, "markdown")) return .markdown;
+    return null;
 }
 
 /// Parses a byte count, accepting a `k`/`m`/`g` suffix (case-insensitive).

@@ -7,7 +7,8 @@
 #   1. zig build                                          (clean build)
 #   2. zig build test                                     (expects success)
 #   3. zig build test -Dengine-mode=passthrough           (expects failure: goldbrick engine)
-#   4. zig build test -Dengine-mode=markdown              (expects failure: Markdown emission)#   5. zig build test -Doptimize=ReleaseSafe              (expects success)
+#   4. zig build test -Dengine-mode=markdown              (expects failure: wrong default dialect)
+#   5. zig build test -Doptimize=ReleaseSafe              (expects success)
 #   6. CLI smoke: the three examples byte-compare, plus error paths
 #      (non-zero exit with empty stdout), --help and --version, the
 #      --data=FILE form with its empty-value and stray-positional errors,
@@ -171,6 +172,14 @@ check_cli_error "error path: no arguments" "$VERIFY_DIR/11-no-args" "$BIN"
 
 check_zero "CLI accepts --data=FILE" "$VERIFY_DIR/15-data-equals.log" \
   bash -c "cd '$REPO' && '$BIN' render 'examples/heading.knap' --data='examples/heading.json' | cmp -s - 'examples/heading.textile'"
+check_zero "CLI --format=markdown renders byte-exact" "$VERIFY_DIR/21-markdown.log" \
+  bash -c "cd '$REPO' && '$BIN' render 'examples/heading.knap' --data='examples/heading.json' --format=markdown | cmp -s - 'examples/heading.markdown'"
+check_zero "CLI --format textile preserves the default" "$VERIFY_DIR/22-textile.log" \
+  bash -c "cd '$REPO' && '$BIN' render 'examples/heading.knap' --data='examples/heading.json' --format textile | cmp -s - 'examples/heading.textile'"
+check_cli_stderr "CLI rejects unknown formats" "$VERIFY_DIR/23-bad-format" \
+  "invalid --format" "$BIN" render "$REPO/examples/heading.knap" --format=html
+check_cli_stderr "CLI rejects duplicate formats" "$VERIFY_DIR/24-duplicate-format" \
+  "duplicate --format" "$BIN" render "$REPO/examples/heading.knap" --format markdown --format textile
 check_cli_stderr "CLI rejects an empty --data= value" "$VERIFY_DIR/16-data-empty" \
   "missing value for --data" "$BIN" render "$REPO/examples/heading.knap" "--data="
 check_cli_stderr "a second positional suggests --data" "$VERIFY_DIR/17-second-positional" \

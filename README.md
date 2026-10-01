@@ -2,22 +2,19 @@
 
 [![CI](https://github.com/drawmeanelephant/k4o/actions/workflows/ci.yml/badge.svg)](https://github.com/drawmeanelephant/k4o/actions/workflows/ci.yml)
 
-A Knap template engine that emits Textile.
+A Knap template engine that emits Textile (default) or CommonMark 0.31.2.
 
 The name is a nod: *Knap for Oliver* — Oliver being the sibling project that
-parses the Textile this emits. Short name, plain job.
+parses both formats this emits. Short name, plain job.
 
-Knap (Obsidian's template language) turns data into Markdown. k4o
-turns data into Textile instead — template plus JSON in, Textile bytes out,
-ready for a Textile parser (the sibling
-[Oliver](https://github.com/drawmeanelephant) project renders the result).
-It is a deliberately small, honest subset: a template core plus a filter
-registry whose every filter emits Textile. Zig, stdlib only, built for a
-static binary — no npm, no network, no dependency on the official knap
-package.
+Knap (Obsidian's template language) turns data into Markdown. k4o renders
+its documented template subset to Textile or CommonMark, selected at runtime.
+The sibling [Oliver](https://github.com/drawmeanelephant/oliver) parses
+both outputs. The production binary is Zig, stdlib only, with no Node or
+network dependency. Official knap is installed only for differential tests.
 
 ```text
-template.knap + data.json ──> k4o ──> Textile bytes ──> a Textile parser ──> HTML
+template.knap + data.json ──> k4o ──> Textile or CommonMark ──> Oliver ──> HTML
 ```
 
 ## Build, run, test
@@ -28,16 +25,21 @@ Requires Zig 0.16.0.
 zig build                       # binary -> zig-out/bin/k4o
 zig build test                  # full suite: fixture corpus + unit tests
 tools/verify.sh                 # build + tests + red-green mutants + CLI smoke + static check
+npm ci --prefix tools/differential --ignore-scripts
+python3 tools/differential/run.py --oliver /path/to/oliver
 ```
 
 ```sh
 zig-out/bin/k4o render template.knap --data data.json
 zig-out/bin/k4o render template.knap --data=data.json
+zig-out/bin/k4o render template.knap --data=data.json --format markdown
 zig-out/bin/k4o --help
 zig-out/bin/k4o --version
 ```
 
-- `render` writes the rendered Textile to stdout, exit 0. No trailing newline
+- `render` writes Textile by default, or CommonMark with `--format markdown`
+  (also `--format=markdown`). `--format textile` selects the default explicitly.
+  No trailing newline
   is added: the output bytes are exactly the rendered template.
 - `--data` is optional; without it the variables default to `{}`. Both
   `--data FILE` and `--data=FILE` are accepted (and `-d` / `-d=FILE`); a bare
@@ -68,7 +70,9 @@ documentation (see the clean-room record below):
 Whitespace notes: one newline immediately following an opening tag
 (`{% if %}`, `{% elseif %}`, `{% else %}`, `{% for %}`) is consumed once, so
 branches and loop bodies join naturally; the newline before a closing tag is
-preserved — place it deliberately.
+preserved — place it deliberately. In Markdown, loop iterations join with a
+newline and one body-final newline is removed. Some standalone-tag whitespace
+still differs from knap (see [Differential boundary](#differential-boundary)).
 
 ### Structured values
 
@@ -88,7 +92,7 @@ different kinds is simply not equal: `{} == []` is false, and an object never
 equals its own JSON text.
 
 **Interpolating them.** An `{{ ... }}` that resolves to an object or array
-emits compact JSON rather than Textile:
+emits compact JSON rather than markup:
 
 ```text
 {{ data }}
@@ -100,7 +104,7 @@ fixture. Key order is preserved from the input, so two inputs that are
 semantically equal but serialise differently produce different bytes.
 
 Reach for the field you want rather than the container: `{{ data.k }}` renders
-`1`, and `{{ items | list }}` renders Textile. The JSON form is a deliberate
+`1`, and `{{ items | list }}` renders the selected format. The JSON form is a deliberate
 escape hatch, not the recommended way to emit prose.
 
 Floats are the one place where interpolation is lossy: `{"a":2.0}` renders as
@@ -184,23 +188,24 @@ trips the instant the limit is crossed instead of after the allocator is
 exhausted — a small cap fails in milliseconds where the old behaviour took
 seconds to produce hundreds of megabytes first.
 
-## Filter registry → Textile mapping
+## Filter registry → output formats
 
-Every filter emits Textile. This is the complete registry (15 names); the
-fixture corpus pins one byte-exact case per filter at minimum.
+This is the complete registry (15 names). The fixture corpus pins both
+formats byte-for-byte for every filter. The Markdown table is raw HTML because
+pipe tables are a GFM extension, not part of CommonMark 0.31.2.
 
-| Filter | Argument | Input example | Emits (Textile) |
+| Filter | Argument | Textile | CommonMark |
 | --- | --- | --- | --- |
-| `h1` … `h6` | — | `{{ title \| h2 }}` | `h2. The Mending Apparatus` |
-| `bold` | — | `{{ word \| bold }}` | `*watch out*` |
-| `italic` | — | `{{ word \| italic }}` | `_very_` |
-| `code` | — | `{{ cmd \| code }}` | `@zig build@` |
-| `codeblock` | — | `{{ snippet \| codeblock }}` | `bc. ` + first line, remaining lines verbatim |
-| `blockquote` | — | `{{ quote \| blockquote }}` | `bq. To be, or not to be.` |
-| `link` | URL (required) | `{{ name \| link:"https://example.com/" }}` | `"Example":https://example.com/` |
-| `list` | — | `{{ items \| list }}` | `* alpha` lines; nested arrays `**`, `***` (max depth 3) |
-| `numbered` | — | `{{ steps \| numbered }}` | `# first` lines; nested arrays `##`, `###` |
-| `table` | — | `{{ rows \| table }}` | `\|_. name\|_. age\|` header row, then `\|Walter\|5\|` rows |
+| `h1` … `h6` | — | `h2. Title` | `## Title` |
+| `bold` | — | `*watch out*` | `**watch out**` |
+| `italic` | — | `_very_` | `*very*` |
+| `code` | — | `@zig build@` | `` `zig build` `` (adaptive backtick delimiter) |
+| `codeblock` | — | `bc. ` + content | fenced code block (adaptive fence) |
+| `blockquote` | — | `bq. Quote` | `> Quote` |
+| `link` | URL (required) | `"Example":https://example.com/` | `[Example](https://example.com/)` |
+| `list` | — | `* item`; nested `**`/`***` | `- item`; nested tab-indented lists |
+| `numbered` | — | `# item`; nested `##`/`###` | `1. item`, `2. item`; nested ordered lists |
+| `table` | — | `\|_. name\|` then `\|Ada\|` | `<table>` with `<thead>`, `<tbody>`, escaped cells |
 
 Error conditions (all produce a message with kind, line, and column):
 
@@ -215,8 +220,9 @@ Error conditions (all produce a message with kind, line, and column):
 - `list`/`numbered`/`table` require arrays; `table` rows must all have the
   same cell count and cells must not contain `|` or newlines; `list` nesting
   beyond 3 levels is an error.
-- Values inside filters are treated as Textile fragments; no escaping is
-  applied.
+- Textile values are left as fragments, as before. Markdown phrase filters
+  escape user-supplied punctuation and raw HTML; markup from earlier filters
+  in a chain stays markup.
 
 ## Example renders (from JSON data)
 
@@ -246,6 +252,17 @@ Table (`examples/table.knap`):
 |Florence|6|
 ```
 
+The same heading example under `--format markdown` emits:
+
+```text
+# The Machine Stops
+
+*A reading note*
+```
+
+The Markdown table uses HTML, parsed as a CommonMark raw HTML block rather
+than a GFM pipe table.
+
 (The emitted table form is byte-identical to the textile-spec `page_layout`
 table example input, and the other emitted forms — `h1. `, `bq. `, `* item`,
 `# item`, `"text":url`, `@code@`, `bc. ` — follow the phrase-modifier and
@@ -261,9 +278,7 @@ the product:
 - **DOM-dependent filters** (`html_to_json`, `remove_html`, and friends). A
   static Zig binary has no DOM — that is a feature, not a gap.
 - **The rest of Knap's broader filter catalog** (data/serialization filters
-  such as `yaml`, `calc`, `parse_json`, `date`, `truncate`, `map`, `where`,
-  …, plus the Markdown-emitting format filters this tool deliberately
-  replaces with Textile ones).
+  such as `yaml`, `calc`, `parse_json`, `date`, `truncate`, `map`, `where`, …).
 - **Regex features** and **whitespace-control operators** (`{%- … -%}`).
 - **`{% set %}` assignment** and the **`??` fallback operator**.
 - **Batch/CSV modes and `--output` file flags** from the reference CLI; only
@@ -276,14 +291,14 @@ the product:
 ## Verification (red-green, no goldbricks)
 
 The suite contains a fixture corpus (byte-exact: template + JSON → expected
-Textile, including trailing-newline behavior) and error fixtures
+Textile **and** Markdown, including trailing-newline behavior) and error fixtures
 (message-checked including line/column), plus unit tests. Two compile-time
 mutant modes let anyone *prove* the tests fail against degraded engines:
 
 ```sh
 zig build test                                # expects: all pass
 zig build test -Dengine-mode=passthrough      # goldbrick: engine returns the template unchanged -> MUST fail
-zig build test -Dengine-mode=markdown         # wrong dialect: filters emit Markdown -> MUST fail
+zig build test -Dengine-mode=markdown         # wrong default dialect -> MUST fail
 ```
 
 The table below is **generated** by `tools/verify.sh` from a real run and
@@ -294,13 +309,13 @@ locally with `tools/verify.sh --update-readme`.
 <!-- verify-table:start -->
 | Mode | Result |
 | --- | --- |
-| `normal` | 40 passed, 0 failed |
-| `passthrough` | 0 passed, 40 failed |
-| `markdown` | 0 passed, 40 failed |
+| `normal` | 41 passed, 0 failed |
+| `passthrough` | 0 passed, 41 failed |
+| `markdown` | 0 passed, 41 failed |
 <!-- verify-table:end -->
 
-CI runs the same script on `ubuntu-latest` at Zig 0.16.0. The counts are
-platform-independent, which is why one table serves both CI and local runs.
+CI runs builds and tests on Linux and macOS at Zig 0.16.0. The verification
+job runs on Linux; the counts are platform-independent.
 
 Every test re-asserts Textile-specific syntax (`h1. `, `bq. `, `*bold*`,
 `_italic_`, `"text":url`, `|_. …|`) through a dialect guard, so neither
@@ -312,12 +327,46 @@ static cross-build check (`-Dtarget=x86_64-linux-musl`, verified with
 `file(1)` as "statically linked"; the macOS host build links the system libc,
 which is a platform constraint).
 
+### Differential boundary
+
+`tools/differential/package-lock.json` pins the official black-box knap CLI
+to **0.6.0** and records its npm integrity hash and transitive dependency.
+The harness uses only `knap render` and `knap --version`; no TypeScript source
+is read. `tools/differential/cases.json` and `expected.json` commit the
+templates, data and oracle stdout. The suite checks exact stdout from both
+programs, a pinned oracle snapshot, exit status, empty stdout on errors,
+diagnostics, timeouts and crashes. It covers headings, phrase filters,
+chains, lists, empty and missing data, comments, nested loops, whitespace
+and malformed templates. Every `.markdown` fixture also runs through
+[Oliver](https://github.com/drawmeanelephant/oliver) as a CommonMark parser,
+with structural assertions for headings, emphasis, links, code, lists and
+HTML tables. Raw HTML is rejected for non-table cases. CI builds Oliver at
+`a45aa5ede557ea7cf7de727bdba61c1f80af544b`.
+
+**Full byte parity with knap is not possible without changing existing k4o
+template semantics or emitting non-CommonMark markup.** The harness explicitly
+enumerates 13 existing fixtures outside that shared subset in
+`EXCLUDED_FIXTURES` and still checks their Markdown bytes and Oliver parse.
+The conflicts are:
+
+- Knap 0.6.0 rejects k4o's `codeblock` and `numbered` filter names.
+- Knap's `link` takes a URL input and label argument, the reverse of k4o.
+- Knap emits GFM pipe tables, not CommonMark tables; k4o uses HTML tables.
+- Knap compares structured values by identity; k4o compares structure.
+- Two nested/adjacent standalone-tag cases trim whitespace differently.
+
+Changing these in only one backend would violate the shared template and data
+contract. The differential suite has zero divergences **in its compatible
+corpus**, not over the entire language. Markdown-only adversarial tests also
+check that punctuation and HTML in data cannot silently turn headings,
+emphasis or list items into different CommonMark nodes.
+
 ## Clean-room record
 
-knap-textile is a clean-room implementation: behavior was derived only from
-Knap's **user-facing documentation** and the Textile specification. The Knap
-parser source was never read, and no existing Knap or Textile
-implementation source was consulted.
+k4o is a clean-room implementation: behavior was derived from Knap's
+**user-facing documentation**, the Textile specification and black-box CLI
+observations. Knap's TypeScript source was never read. The Markdown backend
+is checked through Oliver's CommonMark 0.31.2 parser.
 
 Sources consulted (with pinned revisions; fetched 2026-09-29):
 

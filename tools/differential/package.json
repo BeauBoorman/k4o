@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "name": "k4o-differential-oracle",
+  "version": "1.0.0",
+  "description": "Pinned black-box knap CLI for k4o differential tests",
+  "dependencies": {
+    "knap": "0.6.0"
+  }
+}

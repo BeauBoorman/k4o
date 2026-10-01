@@ -15,11 +15,12 @@ concurrency:
 
 jobs:
   build-test:
-    name: build + test (Zig ${{ matrix.zig }})
-    runs-on: ubuntu-latest
+    name: build + test (${{ matrix.os }}, Zig ${{ matrix.zig }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest]
         zig: ["0.16.0"]
     steps:
       - uses: actions/checkout@v7
@@ -43,6 +44,39 @@ jobs:
 
       - name: Test
         run: zig build test --summary all
+
+  differential:
+    name: differential + CommonMark (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Zig
+        uses: drawmeanelephant/zig-zouave@2d8510d62b517fa786279562cf8b1bdcf0c47b9f
+        with:
+          version: 0.16.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install pinned black-box knap
+        run: npm ci --prefix tools/differential --ignore-scripts --no-audit --no-fund
+
+      - name: Build pinned Oliver
+        run: |
+          git clone --filter=blob:none https://github.com/drawmeanelephant/oliver.git "$RUNNER_TEMP/oliver"
+          git -C "$RUNNER_TEMP/oliver" checkout --detach a45aa5ede557ea7cf7de727bdba61c1f80af544b
+          (cd "$RUNNER_TEMP/oliver" && zig build -Doptimize=ReleaseSafe --prefix "$RUNNER_TEMP/oliver-install")
+
+      - name: Compare bytes and parse CommonMark
+        run: |
+          zig build
+          python3 tools/differential/run.py --oliver "$RUNNER_TEMP/oliver-install/bin/oliver"
 
   verify:
     # The project's real asset: the red-green mutant modes must FAIL, the CLI

@@ -1,0 +1,5 @@
+```
+# Output "I love Ruby"
+say = "I love Ruby"
+puts say
+```
