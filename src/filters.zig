@@ -315,20 +315,45 @@ fn repeatChar(alloc: std.mem.Allocator, c: u8, n: usize) error{OutOfMemory}![]u8
 /// Escape user text inside Markdown constructs, but not the markup emitted by
 /// an earlier filter in the same pipeline (`italic | h2`, `code | bold`).
 fn escapeMarkdown(alloc: std.mem.Allocator, text: []const u8) error{OutOfMemory}![]u8 {
+    return escapeMarkdownInContext(alloc, text, .inline_text);
+}
+
+const MarkdownContext = enum { inline_text, list_item };
+
+fn escapeMarkdownInContext(alloc: std.mem.Allocator, text: []const u8, context: MarkdownContext) error{OutOfMemory}![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
-    for (text) |c| {
+    var ordered_marker = if (context == .list_item) orderedListMarker(text) else null;
+    for (text, 0..) |c, i| {
         if (c == '&') {
             try out.appendSlice(alloc, "&amp;");
         } else {
             const at_line_start = out.items.len == 0 or out.items[out.items.len - 1] == '\n';
             if (std.mem.indexOfScalar(u8, "\\`*_[]<>", c) != null or
-                (at_line_start and std.mem.indexOfScalar(u8, "#+-", c) != null))
+                (at_line_start and std.mem.indexOfScalar(u8, "#+-", c) != null) or
+                ordered_marker == i)
                 try out.append(alloc, '\\');
             try out.append(alloc, c);
         }
+        if (context == .list_item and (c == '\n' or c == '\r')) {
+            const start = i + 1;
+            ordered_marker = if (orderedListMarker(text[start..])) |offset| start + offset else null;
+        }
     }
     return out.toOwnedSlice(alloc);
+}
+
+/// CommonMark ordered markers have 1–9 digits, a '.' or ')', then whitespace
+/// or end-of-line, with at most three leading spaces. Escape the delimiter in
+/// scalar list text so only the array structure can introduce nested lists.
+fn orderedListMarker(text: []const u8) ?usize {
+    var i: usize = 0;
+    while (i < text.len and i < 3 and text[i] == ' ') : (i += 1) {}
+    const digits_start = i;
+    while (i < text.len and i - digits_start < 9 and std.ascii.isDigit(text[i])) : (i += 1) {}
+    if (i == digits_start or i == text.len or (text[i] != '.' and text[i] != ')')) return null;
+    if (i + 1 < text.len and std.mem.indexOfScalar(u8, " \t\r\n", text[i + 1]) == null) return null;
+    return i;
 }
 
 fn escapeUrl(alloc: std.mem.Allocator, url: []const u8) error{OutOfMemory}![]u8 {
@@ -443,7 +468,7 @@ fn emitListLevel(
                     try buf.append(alloc, ' ');
                 }
                 const t = (try scalarText(alloc, item)).?;
-                try buf.appendSlice(alloc, if (format != .textile) try escapeMarkdown(alloc, t) else t);
+                try buf.appendSlice(alloc, if (format != .textile) try escapeMarkdownInContext(alloc, t, .list_item) else t);
             },
         }
     }
