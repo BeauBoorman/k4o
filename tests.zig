@@ -1,6 +1,6 @@
 //! k4o test suite.
 //!
-//! 1. Fixture corpus (`fixtures/*.knap` + `.json` + `.textile`/`.markdown`), byte-exact.
+//! 1. Fixture corpus (`.knap` + `.json` + `.textile`/`.markdown`/`.gfm`), byte-exact.
 //! 2. Error corpus (`fixtures/errors/*.knap` + `.error`), message-checked.
 //! 3. Unit tests for behavior beyond the corpus.
 //! 4. Properties: every registry filter has a fixture, no case output equals
@@ -225,14 +225,19 @@ test "corpus: fixtures render byte-exact" {
     try testing.expectEqual(@as(usize, 0), failures);
 }
 
-fn markdownExpected(comptime name: []const u8) []const u8 {
+fn formatExpected(comptime name: []const u8, comptime format: kt.Format) []const u8 {
+    const extension = if (comptime format == .gfm and
+        (std.mem.eql(u8, name, "ex-table") or std.mem.eql(u8, name, "filter-table-basic")))
+        ".gfm"
+    else
+        ".markdown";
     if (comptime std.mem.startsWith(u8, name, "ex-")) {
-        return @embedFile("examples/" ++ name[3..] ++ ".markdown");
+        return @embedFile("examples/" ++ name[3..] ++ extension);
     }
-    return @embedFile("fixtures/" ++ name ++ ".markdown");
+    return @embedFile("fixtures/" ++ name ++ extension);
 }
 
-test "corpus: every fixture renders byte-exact CommonMark" {
+fn expectFormatFixtures(comptime format: kt.Format) !void {
     var failures: usize = 0;
     inline for (cases) |c| {
         var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
@@ -240,18 +245,84 @@ test "corpus: every fixture renders byte-exact CommonMark" {
         const arena = arena_state.allocator();
         const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, c.data, .{});
         var d = kt.Diagnostic{};
-        if (kt.renderFormat(arena, c.template, parsed, &d, .markdown)) |out| {
-            if (!std.mem.eql(u8, out, markdownExpected(c.name))) {
-                std.debug.print("markdown fixture '{s}': byte mismatch\nexpected: {s}\nactual: {s}\n", .{ c.name, markdownExpected(c.name), out });
+        if (kt.renderFormat(arena, c.template, parsed, &d, format)) |out| {
+            if (!std.mem.eql(u8, out, formatExpected(c.name, format))) {
+                std.debug.print("{s} fixture '{s}': byte mismatch\nexpected: {s}\nactual: {s}\n", .{ @tagName(format), c.name, formatExpected(c.name, format), out });
                 failures += 1;
             }
         } else |e| {
-            std.debug.print("markdown fixture '{s}': error {s}: {s}\n", .{ c.name, @errorName(e), d.message });
+            std.debug.print("{s} fixture '{s}': error {s}: {s}\n", .{ @tagName(format), c.name, @errorName(e), d.message });
             failures += 1;
         }
     }
     try assertTextileDialect();
     try testing.expectEqual(@as(usize, 0), failures);
+}
+
+test "corpus: every fixture renders byte-exact CommonMark" {
+    try expectFormatFixtures(.markdown);
+}
+
+test "corpus: GFM differs from CommonMark only for table fixtures" {
+    try expectFormatFixtures(.gfm);
+}
+
+test "unit: GFM tables have an empty header and escape text cells" {
+    const samples = .{
+        .{ "{\"rows\":[[\"title\"]]}", "|  |\n| - |\n| title |" },
+        .{ "{\"rows\":[[\"*em*\",\"<b>&\",\"\\\\x\"],[1,true,null]]}", "|  |  |  |\n| - | - | - |\n| \\*em\\* | \\<b\\>&amp; | \\\\x |\n| 1 | true |  |" },
+    };
+    inline for (samples) |sample| {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const data = try std.json.parseFromSliceLeaky(std.json.Value, arena, sample[0], .{});
+        var d = kt.Diagnostic{};
+        const out = try kt.renderFormat(arena, "{{ rows | table }}", data, &d, .gfm);
+        try testing.expectEqualStrings(sample[1], out);
+    }
+    try assertTextileDialect();
+}
+
+test "unit: GFM tables retain CommonMark validation and diagnostics" {
+    const samples = .{
+        .{ "{\"rows\":null}", "expects an array of rows" },
+        .{ "{\"rows\":[]}", "expects at least one row" },
+        .{ "{\"rows\":[[]]}", "expects at least one cell" },
+        .{ "{\"rows\":[\"x\"]}", "each row to be an array" },
+        .{ "{\"rows\":[[\"x\"],[\"y\",\"z\"]]}", "same number of cells" },
+        .{ "{\"rows\":[[{}]]}", "expects text cells" },
+        .{ "{\"rows\":[[[\"x\"]]]}", "expects text cells" },
+        .{ "{\"rows\":[[\"x|y\"]]}", "must not contain '|'" },
+        .{ "{\"rows\":[[\"x\\ny\"]]}", "or a newline" },
+    };
+    inline for (samples) |sample| {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const data = try std.json.parseFromSliceLeaky(std.json.Value, arena, sample[0], .{});
+        var markdown_d = kt.Diagnostic{};
+        var gfm_d = kt.Diagnostic{};
+        try testing.expectError(error.Template, kt.renderFormat(arena, "{{ rows | table }}", data, &markdown_d, .markdown));
+        try testing.expectError(error.Template, kt.renderFormat(arena, "{{ rows | table }}", data, &gfm_d, .gfm));
+        try testing.expectEqualStrings(markdown_d.message, gfm_d.message);
+        try testing.expect(std.mem.indexOf(u8, gfm_d.message, sample[1]) != null);
+    }
+    try assertTextileDialect();
+}
+
+test "unit: GFM tables respect the output cap" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const data = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"rows\":[[\"x\"]]}", .{});
+    const expected = "|  |\n| - |\n| x |";
+    var d = kt.Diagnostic{};
+    const out = try kt.renderFormatWithLimit(arena, "{{ rows | table }}", data, &d, .gfm, expected.len);
+    try testing.expectEqualStrings(expected, out);
+    try testing.expectError(error.Template, kt.renderFormatWithLimit(arena, "{{ rows | table }}", data, &d, .gfm, expected.len - 1));
+    try testing.expect(std.mem.indexOf(u8, d.message, "output exceeded") != null);
+    try assertTextileDialect();
 }
 
 test "corpus: error fixtures fail with the pinned message" {

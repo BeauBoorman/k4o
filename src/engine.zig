@@ -1,4 +1,4 @@
-//! Template engine: parse + evaluate the Knap subset into Textile or CommonMark.
+//! Template engine: parse + evaluate into Textile, CommonMark or GFM tables.
 //!
 //! Output and all temporary values are allocated with `alloc`; callers
 //! typically pass an arena allocator and free everything at once.
@@ -197,12 +197,12 @@ const Interp = struct {
         var i: usize = 0;
         while (i < arr.items.len) : (i += 1) {
             self.loops.items[self.loops.items.len - 1].index = i;
-            if (self.format == .markdown and i > 0) try self.put("\n");
+            if (self.format != .textile and i > 0) try self.put("\n");
             const start = self.out.written().len;
             try self.evalNodes(ln.body);
             // Knap joins loop iterations with a line break, removing one
             // body-final newline first. Keep the Textile whitespace unchanged.
-            if (self.format == .markdown and self.out.written().len > start and
+            if (self.format != .textile and self.out.written().len > start and
                 self.out.written()[self.out.written().len - 1] == '\n')
             {
                 self.out.writer.end -= 1;

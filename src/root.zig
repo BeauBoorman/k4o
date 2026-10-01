@@ -1,4 +1,4 @@
-//! k4o: a Knap template engine that emits Textile or CommonMark.
+//! k4o: a Knap template engine that emits Textile, CommonMark or GFM tables.
 //!
 //! Public API surface:
 //!
