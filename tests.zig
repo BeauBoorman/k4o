@@ -267,6 +267,70 @@ test "corpus: GFM differs from CommonMark only for table fixtures" {
     try expectFormatFixtures(.gfm);
 }
 
+test "unit: inline code preserves empty, space, and backtick boundaries" {
+    const samples = .{
+        .{ "{\"text\":\"\"}", "", "@@" },
+        .{ "{}", "", "@@" },
+        .{ "{\"text\":null}", "", "@@" },
+        .{ "{\"text\":\" \"}", "` `", "@ @" },
+        .{ "{\"text\":\"   \"}", "`   `", "@   @" },
+        .{ "{\"text\":\"\\t\"}", "`\t`", "@\t@" },
+        .{ "{\"text\":\" \\t \"}", "`  \t  `", "@ \t @" },
+        .{ "{\"text\":\" a \"}", "`  a  `", "@ a @" },
+        .{ "{\"text\":\" a\"}", "`  a `", "@ a@" },
+        .{ "{\"text\":\"a \"}", "` a  `", "@a @" },
+        .{ "{\"text\":\"`\"}", "`` ` ``", "@`@" },
+        .{ "{\"text\":\"`a\"}", "`` `a ``", "@`a@" },
+        .{ "{\"text\":\"a`\"}", "`` a` ``", "@a`@" },
+        .{ "{\"text\":\"a`b```c``d\"}", "````a`b```c``d````", "@a`b```c``d@" },
+        .{ "{\"text\":\" ``` \"}", "````  ```  ````", "@ ``` @" },
+    };
+    inline for (samples) |sample| {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const data = try std.json.parseFromSliceLeaky(std.json.Value, arena, sample[0], .{});
+        var d = kt.Diagnostic{};
+        for ([_]kt.Format{ .markdown, .gfm }) |format| {
+            const out = try kt.renderFormat(arena, "{{ text | code }}", data, &d, format);
+            try testing.expectEqualStrings(sample[1], out);
+        }
+        const textile = try kt.renderFormat(arena, "{{ text | code }}", data, &d, .textile);
+        try testing.expectEqualStrings(sample[2], textile);
+    }
+    try assertTextileDialect();
+}
+
+test "unit: code fences preserve empty content and terminal newlines" {
+    const samples = .{
+        .{ "{\"text\":\"\"}", "```\n```", "bc. " },
+        .{ "{\"text\":\"   \"}", "```\n   \n```", "bc.    " },
+        .{ "{\"text\":\"x\"}", "```\nx\n```", "bc. x" },
+        .{ "{\"text\":\"x\\n\"}", "```\nx\n```", "bc. x\n" },
+        .{ "{\"text\":\"x\\n\\n\"}", "```\nx\n\n```", "bc. x\n\n" },
+        .{ "{\"text\":\"x\\n\\n\\n\"}", "```\nx\n\n\n```", "bc. x\n\n\n" },
+        .{ "{\"text\":\"\\n\"}", "```\n\n```", "bc. \n" },
+        .{ "{\"text\":\"\\n\\n\"}", "```\n\n\n```", "bc. \n\n" },
+        .{ "{\"text\":\"```\\nx\"}", "````\n```\nx\n````", "bc. ```\nx" },
+        .{ "{\"text\":\"x\\n```\\n\"}", "````\nx\n```\n````", "bc. x\n```\n" },
+        .{ "{\"text\":\"`````\\nx\\n```\\n\\n\"}", "``````\n`````\nx\n```\n\n``````", "bc. `````\nx\n```\n\n" },
+    };
+    inline for (samples) |sample| {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const data = try std.json.parseFromSliceLeaky(std.json.Value, arena, sample[0], .{});
+        var d = kt.Diagnostic{};
+        for ([_]kt.Format{ .markdown, .gfm }) |format| {
+            const out = try kt.renderFormat(arena, "{{ text | codeblock }}", data, &d, format);
+            try testing.expectEqualStrings(sample[1], out);
+        }
+        const textile = try kt.renderFormat(arena, "{{ text | codeblock }}", data, &d, .textile);
+        try testing.expectEqualStrings(sample[2], textile);
+    }
+    try assertTextileDialect();
+}
+
 test "unit: GFM tables have an empty header and escape text cells" {
     const samples = .{
         .{ "{\"rows\":[[\"title\"]]}", "|  |\n| - |\n| title |" },

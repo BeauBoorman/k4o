@@ -349,11 +349,14 @@ fn markdownEmphasis(alloc: std.mem.Allocator, text: []const u8, marker: []const 
     });
 }
 
-/// Delimiters must be longer than any run of backticks in the content. Code
-/// spans with boundary spaces/backticks need padding under CommonMark 0.31.2.
+/// Delimiters must be longer than any run of backticks in the content. Empty
+/// spans have no CommonMark representation; all-space spans must not be padded
+/// because CommonMark only strips boundary padding from non-all-space content.
 fn inlineCode(alloc: std.mem.Allocator, text: []const u8) error{OutOfMemory}![]u8 {
+    if (text.len == 0) return alloc.dupe(u8, text);
     const ticks = try repeatChar(alloc, '`', @max(@as(usize, 1), longestRun(text, '`') + 1));
-    const pad = text.len > 0 and (text[0] == '`' or text[0] == ' ' or text[text.len - 1] == '`' or text[text.len - 1] == ' ');
+    const pad = std.mem.indexOfNone(u8, text, " ") != null and
+        (text[0] == '`' or text[0] == ' ' or text[text.len - 1] == '`' or text[text.len - 1] == ' ');
     return if (pad)
         std.fmt.allocPrint(alloc, "{s} {s} {s}", .{ ticks, text, ticks })
     else
@@ -362,7 +365,8 @@ fn inlineCode(alloc: std.mem.Allocator, text: []const u8) error{OutOfMemory}![]u
 
 fn codeFence(alloc: std.mem.Allocator, text: []const u8) error{OutOfMemory}![]u8 {
     const ticks = try repeatChar(alloc, '`', @max(@as(usize, 3), longestRun(text, '`') + 1));
-    return std.fmt.allocPrint(alloc, "{s}\n{s}\n{s}", .{ ticks, text, ticks });
+    const separator = if (text.len == 0 or std.mem.endsWith(u8, text, "\n")) "" else "\n";
+    return std.fmt.allocPrint(alloc, "{s}\n{s}{s}{s}", .{ ticks, text, separator, ticks });
 }
 
 fn longestRun(text: []const u8, char: u8) usize {

@@ -40,9 +40,22 @@ class Tags(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.names = []
+        self.code_contents = []
+        self._code = None
 
     def handle_starttag(self, tag, attrs):
         self.names.append(tag)
+        if tag == "code":
+            self._code = []
+
+    def handle_endtag(self, tag):
+        if tag == "code" and self._code is not None:
+            self.code_contents.append("".join(self._code))
+            self._code = None
+
+    def handle_data(self, data):
+        if self._code is not None:
+            self._code.append(data)
 
 
 def invoke(command, *, input=None):
@@ -231,6 +244,58 @@ def run(k4o, knap, oliver):
                 assert "<script>" not in html and "&lt;script&gt;" in html, f"{name}: raw HTML leaked: {html!r}"
             if name.startswith("list-"):
                 assert "<pre>" not in html and "<h1>" not in html, f"{name}: list item misparsed: {html!r}"
+            checks += 1
+        # Check parsed code content, not just the presence of a <code> tag.
+        # All-space spans remain code (knap emits plain whitespace); neither
+        # boundary spaces nor repeated terminal newlines are trimmed for parity.
+        code_content = [
+            ("code-empty", "code", "", None),
+            ("code-one-space", "code", " ", " "),
+            ("code-only-spaces", "code", "   ", "   "),
+            ("code-tab", "code", "\t", "\t"),
+            ("code-space-tab", "code", " \t ", " \t "),
+            ("code-boundary-spaces", "code", " a ", " a "),
+            ("code-leading-space", "code", " a", " a"),
+            ("code-trailing-space", "code", "a ", "a "),
+            ("code-only-backtick", "code", "`", "`"),
+            ("code-leading-backtick", "code", "`a", "`a"),
+            ("code-trailing-backtick", "code", "a`", "a`"),
+            ("code-longest-run", "code", "a`b```c``d", "a`b```c``d"),
+            ("code-space-backticks", "code", " ``` ", " ``` "),
+            ("fence-empty", "codeblock", "", ""),
+            ("fence-only-spaces", "codeblock", "   ", "   \n"),
+            ("fence-no-terminal-newline", "codeblock", "x", "x\n"),
+            ("fence-terminal-newline", "codeblock", "x\n", "x\n"),
+            ("fence-two-terminal-newlines", "codeblock", "x\n\n", "x\n\n"),
+            ("fence-three-terminal-newlines", "codeblock", "x\n\n\n", "x\n\n\n"),
+            ("fence-only-newline", "codeblock", "\n", "\n"),
+            ("fence-only-newlines", "codeblock", "\n\n", "\n\n"),
+            ("fence-leading-backticks", "codeblock", "```\nx", "```\nx\n"),
+            ("fence-terminal-backticks", "codeblock", "x\n```\n", "x\n```\n"),
+            ("fence-longest-run", "codeblock", "`````\nx\n```\n\n", "`````\nx\n```\n\n"),
+        ]
+        for name, filter_name, text, content in code_content:
+            path = directory / "case.knap"
+            json_path = directory / "data.json"
+            path.write_text("{{ text | " + filter_name + " }}")
+            json_path.write_text(json.dumps({"text": text}))
+            ours = invoke([k4o, "render", str(path), "--data", str(json_path), "--format", "markdown"])
+            gfm = invoke([k4o, "render", str(path), "--data", str(json_path), "--format", "gfm"])
+            check_result(ours, f"k4o {name}", "ok")
+            check_result(gfm, f"k4o GFM {name}", "ok")
+            assert gfm.stdout == ours.stdout, f"{name}: GFM changed non-table output"
+            tag = None if content is None else ("code" if filter_name == "code" else "pre")
+            html = check_commonmark(name, ours.stdout, oliver, tag)
+            tags = Tags()
+            tags.feed(html)
+            if content is None:
+                assert not ours.stdout and not html and not tags.code_contents, (
+                    f"{name}: empty code invented content: {ours.stdout!r}, {html!r}"
+                )
+            else:
+                assert tags.code_contents == [content], (
+                    f"{name}: code content changed: expected {content!r}, got {tags.code_contents!r}"
+                )
             checks += 1
     print(f"PASS {checks} cases: {len(fixture_paths) - len(EXCLUDED_FIXTURES) + len(cases)} "
           f"byte-identical to knap {KNAP_VERSION} (including {len(GFM_FIXTURES)} GFM tables); "
