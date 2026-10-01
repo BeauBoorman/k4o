@@ -2,16 +2,19 @@
 
 [![CI](https://github.com/drawmeanelephant/k4o/actions/workflows/ci.yml/badge.svg)](https://github.com/drawmeanelephant/k4o/actions/workflows/ci.yml)
 
-A Knap template engine that emits Textile (default) or CommonMark 0.31.2.
+A Knap template engine that emits Textile (default), CommonMark 0.31.2, or
+CommonMark with opt-in GFM pipe tables.
 
 The name is a nod: *Knap for Oliver* — Oliver being the sibling project that
-parses both formats this emits. Short name, plain job.
+parses Textile and CommonMark. Short name, plain job.
 
 Knap (Obsidian's template language) turns data into Markdown. k4o renders
-its documented template subset to Textile or CommonMark, selected at runtime.
+its documented template subset to Textile, CommonMark, or GFM tables, selected
+at runtime.
 The sibling [Oliver](https://github.com/drawmeanelephant/oliver) parses
-both outputs. The production binary is Zig, stdlib only, with no Node or
-network dependency. Official knap is installed only for differential tests.
+the Textile and strict CommonMark outputs. The production binary is Zig,
+stdlib only, with no Node or network dependency. Official knap is installed
+only for differential tests.
 
 ```text
 template.knap + data.json ──> k4o ──> Textile or CommonMark ──> Oliver ──> HTML
@@ -33,14 +36,15 @@ python3 tools/differential/run.py --oliver /path/to/oliver
 zig-out/bin/k4o render template.knap --data data.json
 zig-out/bin/k4o render template.knap --data=data.json
 zig-out/bin/k4o render template.knap --data=data.json --format markdown
+zig-out/bin/k4o render template.knap --data=data.json --format gfm
 zig-out/bin/k4o --help
 zig-out/bin/k4o --version
 ```
 
 - `render` writes Textile by default, or CommonMark with `--format markdown`
-  (also `--format=markdown`). `--format textile` selects the default explicitly.
-  No trailing newline
-  is added: the output bytes are exactly the rendered template.
+  (also `--format=markdown`). `--format gfm` (or `--format=gfm`) changes only
+  table rendering. `--format textile` selects the default explicitly.
+  No trailing newline is added: the output bytes are exactly the rendered template.
 - `--data` is optional; without it the variables default to `{}`. Both
   `--data FILE` and `--data=FILE` are accepted (and `-d` / `-d=FILE`); a bare
   second positional is an error that suggests `--data`.
@@ -49,6 +53,24 @@ zig-out/bin/k4o --version
 - Exit codes: `0` on success, `1` on any error. The message goes to stderr and
   stdout stays empty — rendering is buffered, so partially rendered output is
   never emitted.
+
+### Output format contract
+
+- `markdown` is strict **CommonMark 0.31.2**. Tables remain HTML blocks, and
+  its output bytes are unchanged by the opt-in GFM format.
+- `gfm` is **CommonMark + GFM pipe tables**, for Obsidian consumers. Every
+  non-table construct, including escaping and loop whitespace, emits the same
+  bytes as `markdown`. No strikethrough, task-list or autolink extensions are
+  added.
+- The no-argument `table` filter carries no alignment metadata. The GFM table
+  layout matches the knap **0.6.0** black-box oracle: an empty header, plain `-`
+  delimiters with no alignment markers, then every input row as a body row.
+  Single hyphens are valid GFM delimiters. This deliberately follows the
+  observed oracle bytes rather than promoting the first data row to a header
+  or using `---` delimiters.
+- GFM tables are knowingly unfriendly to **Oliver**: its strict CommonMark
+  parser reads pipe tables as paragraphs, not tables. That is the opt-in
+  tradeoff, not a bug; use `markdown` when feeding tables to Oliver.
 
 ## Template subset
 
@@ -70,8 +92,8 @@ documentation (see the clean-room record below):
 Whitespace notes: one newline immediately following an opening tag
 (`{% if %}`, `{% elseif %}`, `{% else %}`, `{% for %}`) is consumed once, so
 branches and loop bodies join naturally; the newline before a closing tag is
-preserved — place it deliberately. In Markdown, loop iterations join with a
-newline and one body-final newline is removed. Some standalone-tag whitespace
+preserved — place it deliberately. In Markdown and GFM, loop iterations join
+with a newline and one body-final newline is removed. Some standalone-tag whitespace
 still differs from knap (see [Differential boundary](#differential-boundary)).
 
 ### Structured values
@@ -190,9 +212,11 @@ seconds to produce hundreds of megabytes first.
 
 ## Filter registry → output formats
 
-This is the complete registry (15 names). The fixture corpus pins both
-formats byte-for-byte for every filter. The Markdown table is raw HTML because
-pipe tables are a GFM extension, not part of CommonMark 0.31.2.
+This is the complete registry (15 names). The fixture corpus pins all three
+formats byte-for-byte for every filter, reusing `.markdown` expectations for
+non-table GFM output and `.gfm` expectations for tables. The Markdown table is
+raw HTML because pipe tables are a GFM extension, not part of CommonMark 0.31.2.
+The GFM format changes only that row of the registry.
 
 | Filter | Argument | Textile | CommonMark |
 | --- | --- | --- | --- |
@@ -261,7 +285,16 @@ The same heading example under `--format markdown` emits:
 ```
 
 The Markdown table uses HTML, parsed as a CommonMark raw HTML block rather
-than a GFM pipe table.
+than a GFM pipe table. Under `--format gfm`, the table example emits the
+knap 0.6.0 no-argument table form:
+
+```text
+|  |  |
+| - | - |
+| name | age |
+| Walter | 5 |
+| Florence | 6 |
+```
 
 (The emitted table form is byte-identical to the textile-spec `page_layout`
 table example input, and the other emitted forms — `h1. `, `bq. `, `* item`,
@@ -287,13 +320,16 @@ the product:
   brackets take a number or a quoted string key only.
 - **Spaced names in conditions**; spaced names work in interpolation and
   filter inputs only.
+- **Other GFM extensions** (strikethrough, task lists, autolinks) and table
+  alignment or cell spans. The opt-in GFM format adds pipe tables only.
 
 ## Verification (red-green, no goldbricks)
 
 The suite contains a fixture corpus (byte-exact: template + JSON → expected
 Textile **and** Markdown, including trailing-newline behavior) and error fixtures
-(message-checked including line/column), plus unit tests. Two compile-time
-mutant modes let anyone *prove* the tests fail against degraded engines:
+(message-checked including line/column), plus GFM table expectations and unit
+tests. Two compile-time mutant modes let anyone *prove* the tests fail against
+degraded engines:
 
 ```sh
 zig build test                                # expects: all pass
@@ -309,9 +345,9 @@ locally with `tools/verify.sh --update-readme`.
 <!-- verify-table:start -->
 | Mode | Result |
 | --- | --- |
-| `normal` | 41 passed, 0 failed |
-| `passthrough` | 0 passed, 41 failed |
-| `markdown` | 0 passed, 41 failed |
+| `normal` | 45 passed, 0 failed |
+| `passthrough` | 0 passed, 45 failed |
+| `markdown` | 0 passed, 45 failed |
 <!-- verify-table:end -->
 
 CI runs builds and tests on Linux and macOS at Zig 0.16.0. The verification
@@ -344,14 +380,13 @@ HTML tables. Raw HTML is rejected for non-table cases. CI builds Oliver at
 `a45aa5ede557ea7cf7de727bdba61c1f80af544b`.
 
 **Full byte parity with knap is not possible without changing existing k4o
-template semantics or emitting non-CommonMark markup.** The harness explicitly
-enumerates 13 existing fixtures outside that shared subset in
+template semantics.** The harness explicitly enumerates 11 existing fixtures
+outside that shared subset in
 `EXCLUDED_FIXTURES` and still checks their Markdown bytes and Oliver parse.
 The conflicts are:
 
 - Knap 0.6.0 rejects k4o's `codeblock` and `numbered` filter names.
 - Knap's `link` takes a URL input and label argument, the reverse of k4o.
-- Knap emits GFM pipe tables, not CommonMark tables; k4o uses HTML tables.
 - Knap compares structured values by identity; k4o compares structure.
 - Two nested/adjacent standalone-tag cases trim whitespace differently.
 
@@ -360,6 +395,11 @@ contract. The differential suite has zero divergences **in its compatible
 corpus**, not over the entire language. Markdown-only adversarial tests also
 check that punctuation and HTML in data cannot silently turn headings,
 emphasis or list items into different CommonMark nodes.
+
+`examples/table` and `fixtures/filter-table-basic` now byte-match knap 0.6.0
+under `--format gfm` against committed `.gfm` expectations. They are not
+excluded. Their unchanged `.markdown` expectations still run through Oliver
+as HTML tables. Every non-table fixture also verifies GFM/Markdown byte parity.
 
 ## Clean-room record
 

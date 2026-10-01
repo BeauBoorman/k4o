@@ -174,6 +174,12 @@ check_zero "CLI accepts --data=FILE" "$VERIFY_DIR/15-data-equals.log" \
   bash -c "cd '$REPO' && '$BIN' render 'examples/heading.knap' --data='examples/heading.json' | cmp -s - 'examples/heading.textile'"
 check_zero "CLI --format=markdown renders byte-exact" "$VERIFY_DIR/21-markdown.log" \
   bash -c "cd '$REPO' && '$BIN' render 'examples/heading.knap' --data='examples/heading.json' --format=markdown | cmp -s - 'examples/heading.markdown'"
+check_zero "CLI --format gfm renders a byte-exact pipe table" "$VERIFY_DIR/25-gfm-table.log" \
+  bash -c "cd '$REPO' && '$BIN' render 'examples/table.knap' --data='examples/table.json' --format gfm | cmp -s - 'examples/table.gfm'"
+check_zero "CLI --format=gfm preserves non-table Markdown" "$VERIFY_DIR/26-gfm-heading.log" \
+  bash -c "cd '$REPO' && '$BIN' render 'examples/heading.knap' --data='examples/heading.json' --format=gfm | cmp -s - 'examples/heading.markdown'"
+check_cli_stderr "GFM table output stays empty when the cap trips" "$VERIFY_DIR/27-gfm-cap" \
+  "output exceeded" "$BIN" render "$REPO/examples/table.knap" --data "$REPO/examples/table.json" --format=gfm --max-output=1
 check_zero "CLI --format textile preserves the default" "$VERIFY_DIR/22-textile.log" \
   bash -c "cd '$REPO' && '$BIN' render 'examples/heading.knap' --data='examples/heading.json' --format textile | cmp -s - 'examples/heading.textile'"
 check_cli_stderr "CLI rejects unknown formats" "$VERIFY_DIR/23-bad-format" \

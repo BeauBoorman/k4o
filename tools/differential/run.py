@@ -17,11 +17,9 @@ KNAP_VERSION = "0.6.0"
 TIMEOUT = 8
 
 # These pre-existing Textile fixtures cannot have byte-identical output against
-# knap 0.6.0 without changing k4o's language/data semantics, or emitting a
-# GFM-only table. They are still checked against .markdown and parsed by Oliver.
+# knap 0.6.0 without changing k4o's language/data semantics. They are still
+# checked against .markdown and parsed by Oliver. Tables use opt-in GFM parity.
 EXCLUDED_FIXTURES = {
-    "examples/table": "Knap emits a GFM pipe table; CommonMark has no table syntax",
-    "fixtures/filter-table-basic": "Knap emits a GFM pipe table; CommonMark has no table syntax",
     "fixtures/filter-codeblock-basic": "Knap has code_block, not k4o's codeblock filter",
     "fixtures/filter-numbered-basic": "Knap has list:numbered, not k4o's numbered filter",
     "fixtures/filter-numbered-nested": "Knap has list:numbered, not k4o's numbered filter",
@@ -34,6 +32,8 @@ EXCLUDED_FIXTURES = {
     "fixtures/loop-nested": "Knap strips leading whitespace at nested standalone tags",
     "fixtures/loop-values": "Knap strips whitespace before the following tag",
 }
+
+GFM_FIXTURES = {"examples/table", "fixtures/filter-table-basic"}
 
 
 class Tags(HTMLParser):
@@ -66,12 +66,12 @@ def check_result(result, name, status):
         )
 
 
-def compare(name, template, data, status, expected, k4o, knap, directory):
+def compare(name, template, data, status, expected, k4o, knap, directory, format="markdown"):
     path = directory / "case.knap"
     json_path = directory / "data.json"
     path.write_bytes(template)
     json_path.write_bytes(json.dumps(data, ensure_ascii=False).encode())
-    ours = invoke([k4o, "render", str(path), "--data", str(json_path), "--format", "markdown"])
+    ours = invoke([k4o, "render", str(path), "--data", str(json_path), "--format", format])
     theirs = invoke([knap, "render", str(path), "--data", str(json_path)])
     check_result(ours, f"k4o {name}", status)
     check_result(theirs, f"knap {name}", status)
@@ -150,6 +150,10 @@ def run(k4o, knap, oliver):
     fixture_paths = sorted([*ROOT.glob("fixtures/*.knap"), *ROOT.glob("examples/*.knap")])
     fixture_names = {str(path.relative_to(ROOT).with_suffix("")) for path in fixture_paths}
     assert EXCLUDED_FIXTURES.keys() <= fixture_names, "stale fixture exclusions"
+    assert len(EXCLUDED_FIXTURES) == 11, "expected 11 documented fixture incompatibilities"
+    assert GFM_FIXTURES <= fixture_names and not GFM_FIXTURES & EXCLUDED_FIXTURES.keys(), (
+        "stale or excluded GFM parity fixtures"
+    )
     checks = 0
     with tempfile.TemporaryDirectory(prefix="k4o-differential-") as tmp:
         directory = Path(tmp)
@@ -169,12 +173,26 @@ def run(k4o, knap, oliver):
             name = str(path.relative_to(ROOT).with_suffix(""))
             data = json.loads(path.with_suffix(".json").read_text())
             expected_markdown = path.with_suffix(".markdown").read_bytes()
-            if name not in EXCLUDED_FIXTURES:
+            if name in GFM_FIXTURES:
+                gfm_output = compare(
+                    name, path.read_bytes(), data, "ok", path.with_suffix(".gfm").read_bytes(),
+                    k4o, knap, directory, format="gfm",
+                )
+                # The opt-in tradeoff: strict CommonMark sees pipe tables as
+                # paragraphs. The same fixture must still parse as a table
+                # below when rendered with --format markdown.
+                html = check_commonmark(name + "-gfm", gfm_output, oliver, required="p")
+                assert "<table>" not in html, f"{name}: Oliver unexpectedly parsed GFM tables"
+            elif name not in EXCLUDED_FIXTURES:
                 compare(name, path.read_bytes(), data, "ok", expected_markdown, k4o, knap, directory)
-            else:
+            if name in EXCLUDED_FIXTURES or name in GFM_FIXTURES:
                 ours = invoke([k4o, "render", str(path), "--data", str(path.with_suffix(".json")), "--format=markdown"])
                 check_result(ours, f"k4o {name}", "ok")
                 assert ours.stdout == expected_markdown, f"{name}: Markdown fixture differs"
+            if name not in GFM_FIXTURES:
+                gfm = invoke([k4o, "render", str(path), "--data", str(path.with_suffix(".json")), "--format=gfm"])
+                check_result(gfm, f"k4o GFM {name}", "ok")
+                assert gfm.stdout == expected_markdown, f"{name}: GFM changed non-table output"
             check_commonmark(name, expected_markdown, oliver)
             checks += 1
         # Dedicated cases for constructs absent from the knap CLI or outside
@@ -201,6 +219,10 @@ def run(k4o, knap, oliver):
             json_path.write_text(json.dumps(data))
             ours = invoke([k4o, "render", str(path), "--data", str(json_path), "--format", "markdown"])
             check_result(ours, f"k4o {name}", "ok")
+            if tag != "table":
+                gfm = invoke([k4o, "render", str(path), "--data", str(json_path), "--format", "gfm"])
+                check_result(gfm, f"k4o GFM {name}", "ok")
+                assert gfm.stdout == ours.stdout, f"{name}: GFM changed non-table output"
             html = check_commonmark(name, ours.stdout, oliver, tag)
             assert f"<{tag}" in html, f"{name}: expected {tag}: {html!r}"
             if name == "table-escaped":
@@ -211,7 +233,8 @@ def run(k4o, knap, oliver):
                 assert "<pre>" not in html and "<h1>" not in html, f"{name}: list item misparsed: {html!r}"
             checks += 1
     print(f"PASS {checks} cases: {len(fixture_paths) - len(EXCLUDED_FIXTURES) + len(cases)} "
-          f"byte-identical to knap {KNAP_VERSION}; {len(EXCLUDED_FIXTURES)} documented "
+          f"byte-identical to knap {KNAP_VERSION} (including {len(GFM_FIXTURES)} GFM tables); "
+          f"{len(EXCLUDED_FIXTURES)} documented "
           "fixture incompatibilities checked with Oliver")
 
 

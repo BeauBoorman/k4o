@@ -1,6 +1,6 @@
 //! k4o CLI.
 //!
-//!     k4o render <template.knap> [--data <data.json>] [--format textile|markdown]
+//!     k4o render <template.knap> [--data <data.json>] [--format textile|markdown|gfm]
 //!     k4o --help
 //!     k4o --version
 //!
@@ -15,10 +15,10 @@ const build_options = @import("build_options");
 const max_input = 16 * 1024 * 1024;
 
 const usage_text =
-    \\k4o — a Knap template engine that emits Textile or CommonMark.
+    \\k4o — a Knap template engine that emits Textile, CommonMark or GFM tables.
     \\
     \\Usage:
-    \\  k4o render <template.knap> [--data <data.json>] [--format textile|markdown]
+    \\  k4o render <template.knap> [--data <data.json>] [--format textile|markdown|gfm]
     \\  k4o --help
     \\  k4o --version
     \\
@@ -26,7 +26,8 @@ const usage_text =
     \\  --data, -d <file>   JSON object with the template variables
     \\                      (optional; defaults to {}). The --data=<file>
     \\                      form is also accepted.
-    \\  --format <format>   Output format: textile (default) or markdown.
+    \\  --format <format>   Output format: textile (default), markdown
+    \\                      (strict CommonMark), or gfm (pipe tables only).
     \\                      The --format=<format> form is also accepted.
     \\  --max-output, -m <bytes>
     \\                      Ceiling on rendered output, in bytes. Nested
@@ -92,11 +93,11 @@ pub fn main(init: std.process.Init) !u8 {
             i += 1;
             if (i >= args.items.len) return usage(init, "missing value for --format");
             if (seen_format) return usage(init, "duplicate --format");
-            format = parseFormat(args.items[i]) orelse return usage(init, "invalid --format: expected textile or markdown");
+            format = parseFormat(args.items[i]) orelse return usage(init, "invalid --format: expected textile, markdown or gfm");
             seen_format = true;
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             if (seen_format) return usage(init, "duplicate --format");
-            format = parseFormat(arg["--format=".len..]) orelse return usage(init, "invalid --format: expected textile or markdown");
+            format = parseFormat(arg["--format=".len..]) orelse return usage(init, "invalid --format: expected textile, markdown or gfm");
             seen_format = true;
         } else if (std.mem.eql(u8, arg, "--max-output") or std.mem.eql(u8, arg, "-m")) {
             i += 1;
@@ -169,6 +170,7 @@ pub fn main(init: std.process.Init) !u8 {
 fn parseFormat(name: []const u8) ?kt.Format {
     if (std.mem.eql(u8, name, "textile")) return .textile;
     if (std.mem.eql(u8, name, "markdown")) return .markdown;
+    if (std.mem.eql(u8, name, "gfm")) return .gfm;
     return null;
 }
 
