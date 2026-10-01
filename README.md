@@ -354,9 +354,9 @@ locally with `tools/verify.sh --update-readme`.
 <!-- verify-table:start -->
 | Mode | Result |
 | --- | --- |
-| `normal` | 49 passed, 0 failed |
-| `passthrough` | 0 passed, 49 failed |
-| `markdown` | 0 passed, 49 failed |
+| `normal` | 50 passed, 0 failed |
+| `passthrough` | 0 passed, 50 failed |
+| `markdown` | 0 passed, 50 failed |
 <!-- verify-table:end -->
 
 CI runs builds and tests on Linux and macOS at Zig 0.16.0. The verification
@@ -415,6 +415,12 @@ nested arrays still create nested lists. This intentionally differs from
 knap's bytes for those markers and is checked structurally through Oliver,
 not added to the byte-parity corpus. Markdown and GFM emit identical escapes;
 Textile and raw interpolation remain unchanged.
+
+Nested `numbered` lists start at their preceding parent's content column:
+three spaces after `9.`, four after `10.`, five after `100.`, and so on.
+These offsets accumulate through the supported three levels. Oliver checks
+the actual parent/child relationships at marker-width transitions, not
+parity with knap's tab indentation. Sibling numbering and Textile are unchanged.
 
 `examples/table` and `fixtures/filter-table-basic` now byte-match knap 0.6.0
 under `--format gfm` against committed `.gfm` expectations. They are not

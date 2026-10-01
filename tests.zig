@@ -348,6 +348,58 @@ test "unit: list text stays literal while nested arrays retain their markers" {
     try assertTextileDialect();
 }
 
+test "unit: ordered-list indentation follows parent widths at every supported level" {
+    const transitions = [_]struct { number: usize, width: usize }{
+        .{ .number = 9, .width = 3 },
+        .{ .number = 10, .width = 4 },
+        .{ .number = 100, .width = 5 },
+    };
+    for (transitions) |parent| {
+        for (transitions) |child_parent| {
+            var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+            var items = std.json.Array.init(arena);
+            var children = std.json.Array.init(arena);
+            var grandchildren = std.json.Array.init(arena);
+            var markdown: std.ArrayList(u8) = .empty;
+            var textile: std.ArrayList(u8) = .empty;
+            for (1..parent.number + 1) |number| {
+                const text = try std.fmt.allocPrint(arena, "parent {d}", .{number});
+                try items.append(.{ .string = text });
+                try markdown.appendSlice(arena, try std.fmt.allocPrint(arena, "{d}. {s}\n", .{ number, text }));
+                try textile.appendSlice(arena, try std.fmt.allocPrint(arena, "# {s}\n", .{text}));
+            }
+            for (1..child_parent.number + 1) |number| {
+                const text = try std.fmt.allocPrint(arena, "child {d}", .{number});
+                try children.append(.{ .string = text });
+                try markdown.appendNTimes(arena, ' ', parent.width);
+                try markdown.appendSlice(arena, try std.fmt.allocPrint(arena, "{d}. {s}\n", .{ number, text }));
+                try textile.appendSlice(arena, try std.fmt.allocPrint(arena, "## {s}\n", .{text}));
+            }
+            try grandchildren.append(.{ .string = "grandchild" });
+            try children.append(.{ .array = grandchildren });
+            try children.append(.{ .string = "child sibling" });
+            try items.append(.{ .array = children });
+            try items.append(.{ .string = "parent sibling" });
+            try markdown.appendNTimes(arena, ' ', parent.width + child_parent.width);
+            try markdown.appendSlice(arena, "1. grandchild\n");
+            try markdown.appendNTimes(arena, ' ', parent.width);
+            try markdown.appendSlice(arena, try std.fmt.allocPrint(arena, "{d}. child sibling\n{d}. parent sibling", .{ child_parent.number + 1, parent.number + 1 }));
+            try textile.appendSlice(arena, "### grandchild\n## child sibling\n# parent sibling");
+            var object: std.json.ObjectMap = .empty;
+            try object.put(arena, "items", .{ .array = items });
+            const data = std.json.Value{ .object = object };
+            var d = kt.Diagnostic{};
+            for ([_]kt.Format{ .markdown, .gfm }) |format| {
+                try testing.expectEqualStrings(markdown.items, try kt.renderFormat(arena, "{{ items | numbered }}", data, &d, format));
+            }
+            try testing.expectEqualStrings(textile.items, try kt.renderFormat(arena, "{{ items | numbered }}", data, &d, .textile));
+        }
+    }
+    try assertTextileDialect();
+}
+
 test "unit: inline code preserves empty, space, and backtick boundaries" {
     const samples = .{
         .{ "{\"text\":\"\"}", "", "@@" },

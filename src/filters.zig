@@ -419,7 +419,7 @@ fn emitList(
     };
     var buf = std.ArrayList(u8).empty;
     errdefer buf.deinit(alloc);
-    try emitListLevel(alloc, d, template, call, arr.items, ordered, format, 1, &buf);
+    try emitListLevel(alloc, d, template, call, arr.items, ordered, format, 1, 0, &buf);
     return buf.toOwnedSlice(alloc);
 }
 
@@ -432,11 +432,13 @@ fn emitListLevel(
     ordered: bool,
     format: Format,
     depth: usize,
+    ordered_indent: usize,
     buf: *std.ArrayList(u8),
 ) error{ Template, OutOfMemory }!void {
     var first = true;
     var has_parent = false;
     var number: usize = 0;
+    var child_indent = ordered_indent;
     for (items) |item| {
         switch (item) {
             .array => |sub| {
@@ -447,7 +449,7 @@ fn emitListLevel(
                 // A nested array with no preceding parent item cannot form a
                 // nested CommonMark list; promote its items to this level.
                 const child_depth = if (format != .textile and !has_parent) depth else depth + 1;
-                try emitListLevel(alloc, d, template, call, sub.items, ordered, format, child_depth, buf);
+                try emitListLevel(alloc, d, template, call, sub.items, ordered, format, child_depth, child_indent, buf);
             },
             .object => return failRender(alloc, d, template, call.offset, "filter '{s}' expects list items to be text or nested arrays", .{call.name}),
             else => {
@@ -455,12 +457,19 @@ fn emitListLevel(
                 first = false;
                 has_parent = true;
                 if (format != .textile) {
-                    var indent = depth;
-                    while (indent > 1) : (indent -= 1) try buf.appendSlice(alloc, if (ordered) "   " else "\t");
                     if (ordered) {
+                        try buf.appendNTimes(alloc, ' ', ordered_indent);
                         number += 1;
-                        try buf.appendSlice(alloc, try std.fmt.allocPrint(alloc, "{d}. ", .{number}));
-                    } else try buf.appendSlice(alloc, "- ");
+                        const marker = try std.fmt.allocPrint(alloc, "{d}. ", .{number});
+                        // Children start at this parent's content column,
+                        // which moves when its number gains another digit.
+                        child_indent = ordered_indent + marker.len;
+                        try buf.appendSlice(alloc, marker);
+                    } else {
+                        var indent = depth;
+                        while (indent > 1) : (indent -= 1) try buf.append(alloc, '\t');
+                        try buf.appendSlice(alloc, "- ");
+                    }
                 } else {
                     const marker: u8 = if (ordered) '#' else '*';
                     var count = depth;
