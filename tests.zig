@@ -267,6 +267,87 @@ test "corpus: GFM differs from CommonMark only for table fixtures" {
     try expectFormatFixtures(.gfm);
 }
 
+test "unit: scalar list text escapes ordered-list markers only in list context" {
+    const samples = .{
+        .{ "1. numbered", "1\\. numbered" },
+        .{ "1) numbered", "1\\) numbered" },
+        .{ "12. numbered", "12\\. numbered" },
+        .{ "12) numbered", "12\\) numbered" },
+        .{ "0. zero", "0\\. zero" },
+        .{ "001) leading zero", "001\\) leading zero" },
+        .{ "123456789. nine digits", "123456789\\. nine digits" },
+        .{ "123456789) nine digits", "123456789\\) nine digits" },
+        .{ "1.", "1\\." },
+        .{ "1)", "1\\)" },
+        .{ "1.\ttab", "1\\.\ttab" },
+        .{ "1)\ttab", "1\\)\ttab" },
+        .{ " 1. indented", " 1\\. indented" },
+        .{ "   12) indented", "   12\\) indented" },
+        .{ "intro\n1. continuation", "intro\n1\\. continuation" },
+        .{ "intro\n1) continuation", "intro\n1\\) continuation" },
+        .{ "plain 1. inline", "plain 1. inline" },
+        .{ "1.2 decimal", "1.2 decimal" },
+        .{ "1.no space", "1.no space" },
+        .{ "1)no space", "1)no space" },
+        .{ "1234567890. ten digits", "1234567890. ten digits" },
+        .{ "1234567890) ten digits", "1234567890) ten digits" },
+    };
+    inline for (samples) |sample| {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const json = try std.json.Stringify.valueAlloc(arena, .{ .items = .{sample[0]}, .text = sample[0] }, .{});
+        const data = try std.json.parseFromSliceLeaky(std.json.Value, arena, json, .{});
+        var d = kt.Diagnostic{};
+        for ([_]kt.Format{ .markdown, .gfm }) |format| {
+            try testing.expectEqualStrings("- " ++ sample[1], try kt.renderFormat(arena, "{{ items | list }}", data, &d, format));
+            try testing.expectEqualStrings("1. " ++ sample[1], try kt.renderFormat(arena, "{{ items | numbered }}", data, &d, format));
+            // This escape belongs to list contents, not raw interpolation or
+            // inline filters. Single-line input can also pass through a heading.
+            try testing.expectEqualStrings(sample[0], try kt.renderFormat(arena, "{{ text }}", data, &d, format));
+            if (comptime std.mem.indexOfScalar(u8, sample[0], '\n') == null) {
+                try testing.expectEqualStrings("# " ++ sample[0], try kt.renderFormat(arena, "{{ text | h1 }}", data, &d, format));
+            }
+        }
+        try testing.expectEqualStrings("* " ++ sample[0], try kt.renderFormat(arena, "{{ items | list }}", data, &d, .textile));
+        try testing.expectEqualStrings("# " ++ sample[0], try kt.renderFormat(arena, "{{ items | numbered }}", data, &d, .textile));
+    }
+    try assertTextileDialect();
+}
+
+test "unit: list text stays literal while nested arrays retain their markers" {
+    const samples = .{
+        .{
+            "{\"items\":[\"# heading\",\"> quote\",\"---\",\"***\",\"<script>\"]}",
+            "- \\# heading\n- \\> quote\n- \\---\n- \\*\\*\\*\n- \\<script\\>",
+            "1. \\# heading\n2. \\> quote\n3. \\---\n4. \\*\\*\\*\n5. \\<script\\>",
+            "* # heading\n* > quote\n* ---\n* ***\n* <script>",
+            "# # heading\n# > quote\n# ---\n# ***\n# <script>",
+        },
+        .{
+            "{\"items\":[\"1. parent\",[\"12) child\",[\"123. grandchild\"],\"2. child\"],\"3) sibling\"]}",
+            "- 1\\. parent\n\t- 12\\) child\n\t\t- 123\\. grandchild\n\t- 2\\. child\n- 3\\) sibling",
+            "1. 1\\. parent\n   1. 12\\) child\n      1. 123\\. grandchild\n   2. 2\\. child\n2. 3\\) sibling",
+            "* 1. parent\n** 12) child\n*** 123. grandchild\n** 2. child\n* 3) sibling",
+            "# 1. parent\n## 12) child\n### 123. grandchild\n## 2. child\n# 3) sibling",
+        },
+    };
+    inline for (samples) |sample| {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const data = try std.json.parseFromSliceLeaky(std.json.Value, arena, sample[0], .{});
+        var d = kt.Diagnostic{};
+        for ([_]kt.Format{ .markdown, .gfm }) |format| {
+            try testing.expectEqualStrings(sample[1], try kt.renderFormat(arena, "{{ items | list }}", data, &d, format));
+            try testing.expectEqualStrings(sample[2], try kt.renderFormat(arena, "{{ items | numbered }}", data, &d, format));
+        }
+        try testing.expectEqualStrings(sample[3], try kt.renderFormat(arena, "{{ items | list }}", data, &d, .textile));
+        try testing.expectEqualStrings(sample[4], try kt.renderFormat(arena, "{{ items | numbered }}", data, &d, .textile));
+    }
+    try assertTextileDialect();
+}
+
 test "unit: inline code preserves empty, space, and backtick boundaries" {
     const samples = .{
         .{ "{\"text\":\"\"}", "", "@@" },

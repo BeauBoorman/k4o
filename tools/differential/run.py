@@ -41,19 +41,35 @@ class Tags(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.names = []
         self.code_contents = []
+        self.list_item_contents = []
+        self.list_item_depths = []
+        self._list_depth = 0
+        self._items = []
         self._code = None
 
     def handle_starttag(self, tag, attrs):
         self.names.append(tag)
+        if tag in {"ul", "ol"}:
+            self._list_depth += 1
+        if tag == "li":
+            self._items.append(len(self.list_item_contents))
+            self.list_item_contents.append("")
+            self.list_item_depths.append(self._list_depth)
         if tag == "code":
             self._code = []
 
     def handle_endtag(self, tag):
+        if tag == "li":
+            self._items.pop()
+        if tag in {"ul", "ol"}:
+            self._list_depth -= 1
         if tag == "code" and self._code is not None:
             self.code_contents.append("".join(self._code))
             self._code = None
 
     def handle_data(self, data):
+        if self._items:
+            self.list_item_contents[self._items[-1]] += data
         if self._code is not None:
             self._code.append(data)
 
@@ -245,6 +261,59 @@ def run(k4o, knap, oliver):
             if name.startswith("list-"):
                 assert "<pre>" not in html and "<h1>" not in html, f"{name}: list item misparsed: {html!r}"
             checks += 1
+        # Structural, not knap byte parity: text-driven ordered markers must
+        # remain literal, while genuine arrays must still produce nested lists.
+        scalar_list_text = [
+            "1. numbered", "1) numbered", "12. numbered", "12) numbered",
+            "0. zero", "001) leading zero",
+            "123456789. nine digits", "123456789) nine digits",
+            "1.", "1)", "1.\ttab", "1)\ttab",
+            " 1. indented", "   12) indented",
+            "plain 1. inline", "1.2 decimal", "1.no space", "1)no space",
+            "1234567890. ten digits", "1234567890) ten digits",
+            "# heading", "> quote", "---", "***", "<script>",
+        ]
+        list_content = [
+            (f"scalar-{index}", [text], [1], [text.strip()])
+            for index, text in enumerate(scalar_list_text)
+        ] + [
+            ("block-starts", scalar_list_text, [1] * len(scalar_list_text),
+             [text.strip() for text in scalar_list_text]),
+            ("nested-arrays",
+             ["1. parent", ["12) child", ["123. grandchild"], "2. child"], "3) sibling"],
+             [1, 2, 3, 2, 1],
+             ["1. parent", "12) child", "123. grandchild", "2. child", "3) sibling"]),
+            ("leading-array", [["1. promoted"], "12) sibling"], [1, 1],
+             ["1. promoted", "12) sibling"]),
+            ("continuation-dot", ["intro\n1. continuation"], [1], ["intro\n1. continuation"]),
+            ("continuation-parenthesis", ["intro\n1) continuation"], [1], ["intro\n1) continuation"]),
+        ]
+        for filter_name, tag in [("list", "ul"), ("numbered", "ol")]:
+            for name, items, depths, contents in list_content:
+                name = f"{filter_name}-{name}"
+                path = directory / "case.knap"
+                json_path = directory / "data.json"
+                path.write_text("{{ items | " + filter_name + " }}")
+                json_path.write_text(json.dumps({"items": items}))
+                ours = invoke([k4o, "render", str(path), "--data", str(json_path), "--format", "markdown"])
+                gfm = invoke([k4o, "render", str(path), "--data", str(json_path), "--format", "gfm"])
+                check_result(ours, f"k4o {name}", "ok")
+                check_result(gfm, f"k4o GFM {name}", "ok")
+                assert gfm.stdout == ours.stdout, f"{name}: GFM changed non-table output"
+                html = check_commonmark(name, ours.stdout, oliver, tag)
+                tags = Tags()
+                tags.feed(html)
+                assert set(tags.names) <= {tag, "li"}, (
+                    f"{name}: scalar text introduced another node type: {html!r}"
+                )
+                assert tags.list_item_depths == depths, (
+                    f"{name}: list nesting changed: expected {depths}, got {tags.list_item_depths}"
+                )
+                actual = [text.strip() for text in tags.list_item_contents]
+                assert actual == contents, (
+                    f"{name}: item text changed: expected {contents!r}, got {actual!r}"
+                )
+                checks += 1
         # Check parsed code content, not just the presence of a <code> tag.
         # All-space spans remain code (knap emits plain whitespace); neither
         # boundary spaces nor repeated terminal newlines are trimmed for parity.

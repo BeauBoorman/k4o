@@ -354,9 +354,9 @@ locally with `tools/verify.sh --update-readme`.
 <!-- verify-table:start -->
 | Mode | Result |
 | --- | --- |
-| `normal` | 47 passed, 0 failed |
-| `passthrough` | 0 passed, 47 failed |
-| `markdown` | 0 passed, 47 failed |
+| `normal` | 49 passed, 0 failed |
+| `passthrough` | 0 passed, 49 failed |
+| `markdown` | 0 passed, 49 failed |
 <!-- verify-table:end -->
 
 CI runs builds and tests on Linux and macOS at Zig 0.16.0. The verification
@@ -407,6 +407,14 @@ emphasis or list items into different CommonMark nodes. Code-content
 regressions check empty and all-space spans, preserved boundary spaces and
 backticks, and fences with zero, one, or multiple terminal newlines through
 Oliver, with identical GFM/Markdown bytes.
+
+Scalar `list` and `numbered` items escape ordered-list markers such as
+`1. text`, `1) text` and their multi-digit forms at the start of a line
+(including up to three leading spaces). They stay literal item text; genuine
+nested arrays still create nested lists. This intentionally differs from
+knap's bytes for those markers and is checked structurally through Oliver,
+not added to the byte-parity corpus. Markdown and GFM emit identical escapes;
+Textile and raw interpolation remain unchanged.
 
 `examples/table` and `fixtures/filter-table-basic` now byte-match knap 0.6.0
 under `--format gfm` against committed `.gfm` expectations. They are not
