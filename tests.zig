@@ -1,6 +1,6 @@
 //! k4o test suite.
 //!
-//! 1. Fixture corpus (`fixtures/*.knap` + `.json` + `.textile`), byte-exact.
+//! 1. Fixture corpus (`fixtures/*.knap` + `.json` + `.textile`/`.markdown`), byte-exact.
 //! 2. Error corpus (`fixtures/errors/*.knap` + `.error`), message-checked.
 //! 3. Unit tests for behavior beyond the corpus.
 //! 4. Properties: every registry filter has a fixture, no case output equals
@@ -222,6 +222,35 @@ test "corpus: fixtures render byte-exact" {
             failures += 1;
         }
     }
+    try testing.expectEqual(@as(usize, 0), failures);
+}
+
+fn markdownExpected(comptime name: []const u8) []const u8 {
+    if (comptime std.mem.startsWith(u8, name, "ex-")) {
+        return @embedFile("examples/" ++ name[3..] ++ ".markdown");
+    }
+    return @embedFile("fixtures/" ++ name ++ ".markdown");
+}
+
+test "corpus: every fixture renders byte-exact CommonMark" {
+    var failures: usize = 0;
+    inline for (cases) |c| {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, c.data, .{});
+        var d = kt.Diagnostic{};
+        if (kt.renderFormat(arena, c.template, parsed, &d, .markdown)) |out| {
+            if (!std.mem.eql(u8, out, markdownExpected(c.name))) {
+                std.debug.print("markdown fixture '{s}': byte mismatch\nexpected: {s}\nactual: {s}\n", .{ c.name, markdownExpected(c.name), out });
+                failures += 1;
+            }
+        } else |e| {
+            std.debug.print("markdown fixture '{s}': error {s}: {s}\n", .{ c.name, @errorName(e), d.message });
+            failures += 1;
+        }
+    }
+    try assertTextileDialect();
     try testing.expectEqual(@as(usize, 0), failures);
 }
 

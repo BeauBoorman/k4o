@@ -1,4 +1,4 @@
-//! Template engine: parse + evaluate the Knap subset into Textile bytes.
+//! Template engine: parse + evaluate the Knap subset into Textile or CommonMark.
 //!
 //! Output and all temporary values are allocated with `alloc`; callers
 //! typically pass an arena allocator and free everything at once.
@@ -12,6 +12,8 @@ const filters = @import("filters.zig");
 pub const Error = error{ Template, OutOfMemory };
 
 const passthrough_mode = std.mem.eql(u8, build_options.engine_mode, "passthrough");
+const default_format: filters.Format = if (std.mem.eql(u8, build_options.engine_mode, "markdown")) .markdown else .textile;
+pub const Format = filters.Format;
 
 /// Default ceiling on rendered output, in bytes.
 ///
@@ -30,7 +32,7 @@ pub fn render(
     data: std.json.Value,
     d: *diag.Diagnostic,
 ) Error![]const u8 {
-    return renderWithLimit(alloc, template, data, d, default_max_output);
+    return renderFormatWithLimit(alloc, template, data, d, default_format, default_max_output);
 }
 
 /// As `render`, but caps the output at `max_output` bytes. Pass 0 for no cap.
@@ -39,6 +41,28 @@ pub fn renderWithLimit(
     template: []const u8,
     data: std.json.Value,
     d: *diag.Diagnostic,
+    max_output: usize,
+) Error![]const u8 {
+    return renderFormatWithLimit(alloc, template, data, d, default_format, max_output);
+}
+
+/// Select an output format without changing the template or data semantics.
+pub fn renderFormat(
+    alloc: std.mem.Allocator,
+    template: []const u8,
+    data: std.json.Value,
+    d: *diag.Diagnostic,
+    format: Format,
+) Error![]const u8 {
+    return renderFormatWithLimit(alloc, template, data, d, format, default_max_output);
+}
+
+pub fn renderFormatWithLimit(
+    alloc: std.mem.Allocator,
+    template: []const u8,
+    data: std.json.Value,
+    d: *diag.Diagnostic,
+    format: Format,
     max_output: usize,
 ) Error![]const u8 {
     if (passthrough_mode) {
@@ -54,8 +78,9 @@ pub fn renderWithLimit(
         .alloc = alloc,
         .template = template,
         .diag = d,
-        .out = &out.writer,
+        .out = &out,
         .root = data,
+        .format = format,
         .max_output = max_output,
     };
     try interp.evalNodes(doc.nodes);
@@ -73,8 +98,9 @@ const Interp = struct {
     alloc: std.mem.Allocator,
     template: []const u8,
     diag: *diag.Diagnostic,
-    out: *std.Io.Writer,
+    out: *std.Io.Writer.Allocating,
     root: std.json.Value,
+    format: Format,
     loops: std.ArrayList(LoopFrame) = .empty,
     max_output: usize,
     written: usize = 0,
@@ -103,7 +129,7 @@ const Interp = struct {
 
     fn put(self: *Interp, bytes: []const u8) Error!void {
         try self.charge(bytes.len);
-        self.out.writeAll(bytes) catch return error.OutOfMemory;
+        self.out.writer.writeAll(bytes) catch return error.OutOfMemory;
     }
 
     fn putFmt(self: *Interp, comptime fmt: []const u8, args: anytype) Error!void {
@@ -125,8 +151,10 @@ const Interp = struct {
 
     fn evalOutput(self: *Interp, pl: parse.Pipeline) Error!void {
         var value = try self.resolveExpr(pl.value);
+        var markup = false;
         for (pl.filters) |call| {
-            value = try filters.apply(self.alloc, self.diag, self.template, call, value, self.root);
+            value = try filters.apply(self.alloc, self.diag, self.template, call, value, self.root, self.format, markup);
+            markup = true;
         }
         try self.writeValue(value);
     }
@@ -169,7 +197,17 @@ const Interp = struct {
         var i: usize = 0;
         while (i < arr.items.len) : (i += 1) {
             self.loops.items[self.loops.items.len - 1].index = i;
+            if (self.format == .markdown and i > 0) try self.put("\n");
+            const start = self.out.written().len;
             try self.evalNodes(ln.body);
+            // Knap joins loop iterations with a line break, removing one
+            // body-final newline first. Keep the Textile whitespace unchanged.
+            if (self.format == .markdown and self.out.written().len > start and
+                self.out.written()[self.out.written().len - 1] == '\n')
+            {
+                self.out.writer.end -= 1;
+                self.written -= 1;
+            }
         }
     }
 

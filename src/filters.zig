@@ -1,9 +1,8 @@
-//! The Textile-emitting filter registry.
+//! Format-specific emitters for the shared Knap filter registry.
 //!
-//! Every filter in this registry emits Textile by construction. The
-//! compile-time `-Dengine-mode=markdown` mutant swaps the emitters for
-//! Markdown equivalents so the test suite can prove it fails against
-//! Markdown-polluted output (README.md -> Verification).
+//! The filter names, arguments, value validation and diagnostics are shared.
+//! Only the emitted markup depends on the selected format. The compile-time
+//! markdown mutant still changes the default format for red-green verification.
 //!
 //! Clean-room note: the filter *names* follow Knap's user-facing
 //! documentation; the emitted forms follow the Textile specification
@@ -12,11 +11,8 @@
 const std = @import("std");
 const diag = @import("diag.zig");
 const parse = @import("parse.zig");
-const build_options = @import("build_options");
-
 pub const Error = error{ Template, OutOfMemory };
-
-const markdown_mode = std.mem.eql(u8, build_options.engine_mode, "markdown");
+pub const Format = enum { textile, markdown };
 
 pub const Entry = struct {
     name: []const u8,
@@ -68,6 +64,8 @@ pub fn apply(
     call: parse.FilterCall,
     input: std.json.Value,
     root: std.json.Value,
+    format: Format,
+    input_is_markup: bool,
 ) Error!std.json.Value {
     if (!isRegistered(call.name)) {
         return diag.fail(alloc, d, .unknown_filter, template, call.offset, "no filter named \"{s}\"", .{call.name});
@@ -76,8 +74,9 @@ pub fn apply(
     if (headingLevel(call.name)) |level| {
         if (call.arg != null) return badArg(alloc, d, template, call, "filter '{s}' takes no arguments", .{call.name});
         const text = try phraseText(alloc, d, template, call, input);
-        const out = if (markdown_mode)
-            try std.fmt.allocPrint(alloc, "{s} {s}", .{ try repeatChar(alloc, '#', level), text })
+        const content = if (format == .markdown and !input_is_markup) try escapeMarkdown(alloc, text) else text;
+        const out = if (format == .markdown)
+            try std.fmt.allocPrint(alloc, "{s} {s}", .{ try repeatChar(alloc, '#', level), content })
         else
             try std.fmt.allocPrint(alloc, "h{d}. {s}", .{ level, text });
         return .{ .string = out };
@@ -86,8 +85,9 @@ pub fn apply(
     if (std.mem.eql(u8, call.name, "bold")) {
         if (call.arg != null) return badArg(alloc, d, template, call, "filter 'bold' takes no arguments", .{});
         const text = try phraseText(alloc, d, template, call, input);
-        const out = if (markdown_mode)
-            try std.fmt.allocPrint(alloc, "**{s}**", .{text})
+        const content = if (format == .markdown and !input_is_markup) try escapeMarkdown(alloc, text) else text;
+        const out = if (format == .markdown)
+            try markdownEmphasis(alloc, content, "**")
         else
             try std.fmt.allocPrint(alloc, "*{s}*", .{text});
         return .{ .string = out };
@@ -96,8 +96,9 @@ pub fn apply(
     if (std.mem.eql(u8, call.name, "italic")) {
         if (call.arg != null) return badArg(alloc, d, template, call, "filter 'italic' takes no arguments", .{});
         const text = try phraseText(alloc, d, template, call, input);
-        const out = if (markdown_mode)
-            try std.fmt.allocPrint(alloc, "*{s}*", .{text})
+        const content = if (format == .markdown and !input_is_markup) try escapeMarkdown(alloc, text) else text;
+        const out = if (format == .markdown)
+            try markdownEmphasis(alloc, content, "*")
         else
             try std.fmt.allocPrint(alloc, "_{s}_", .{text});
         return .{ .string = out };
@@ -106,8 +107,8 @@ pub fn apply(
     if (std.mem.eql(u8, call.name, "code")) {
         if (call.arg != null) return badArg(alloc, d, template, call, "filter 'code' takes no arguments", .{});
         const text = try phraseText(alloc, d, template, call, input);
-        const out = if (markdown_mode)
-            try std.fmt.allocPrint(alloc, "`{s}`", .{text})
+        const out = if (format == .markdown)
+            try inlineCode(alloc, text)
         else
             try std.fmt.allocPrint(alloc, "@{s}@", .{text});
         return .{ .string = out };
@@ -116,8 +117,9 @@ pub fn apply(
     if (std.mem.eql(u8, call.name, "blockquote")) {
         if (call.arg != null) return badArg(alloc, d, template, call, "filter 'blockquote' takes no arguments", .{});
         const text = try phraseText(alloc, d, template, call, input);
-        const out = if (markdown_mode)
-            try std.fmt.allocPrint(alloc, "> {s}", .{text})
+        const content = if (format == .markdown and !input_is_markup) try escapeMarkdown(alloc, text) else text;
+        const out = if (format == .markdown)
+            try std.fmt.allocPrint(alloc, "> {s}", .{content})
         else
             try std.fmt.allocPrint(alloc, "bq. {s}", .{text});
         return .{ .string = out };
@@ -127,8 +129,8 @@ pub fn apply(
         if (call.arg != null) return badArg(alloc, d, template, call, "filter 'codeblock' takes no arguments", .{});
         const text = (try scalarText(alloc, input)) orelse
             return failRender(alloc, d, template, call.offset, "filter 'codeblock' expects a text value, but got {s}", .{typeName(input)});
-        const out = if (markdown_mode)
-            try std.fmt.allocPrint(alloc, "```\n{s}\n```", .{text})
+        const out = if (format == .markdown)
+            try codeFence(alloc, text)
         else
             try std.fmt.allocPrint(alloc, "bc. {s}", .{text});
         return .{ .string = out };
@@ -148,11 +150,12 @@ pub fn apply(
             return badArg(alloc, d, template, call, "filter 'link' refuses the URL scheme '{s}:', which can execute script in the Textile renderer", .{schemeName(url)});
         }
         const text = try phraseText(alloc, d, template, call, input);
+        const content = if (format == .markdown and !input_is_markup) try escapeMarkdown(alloc, text) else text;
         if (std.mem.indexOfScalar(u8, text, '"') != null) {
             return failRender(alloc, d, template, call.offset, "filter 'link' text must not contain a double quote", .{});
         }
-        const out = if (markdown_mode)
-            try std.fmt.allocPrint(alloc, "[{s}]({s})", .{ text, url })
+        const out = if (format == .markdown)
+            try std.fmt.allocPrint(alloc, "[{s}]({s})", .{ content, try escapeUrl(alloc, url) })
         else
             try std.fmt.allocPrint(alloc, "\"{s}\":{s}", .{ text, url });
         return .{ .string = out };
@@ -160,15 +163,15 @@ pub fn apply(
 
     if (std.mem.eql(u8, call.name, "list")) {
         if (call.arg != null) return badArg(alloc, d, template, call, "filter 'list' takes no arguments", .{});
-        return .{ .string = try emitList(alloc, d, template, call, input, false) };
+        return .{ .string = try emitList(alloc, d, template, call, input, false, format) };
     }
     if (std.mem.eql(u8, call.name, "numbered")) {
         if (call.arg != null) return badArg(alloc, d, template, call, "filter 'numbered' takes no arguments", .{});
-        return .{ .string = try emitList(alloc, d, template, call, input, true) };
+        return .{ .string = try emitList(alloc, d, template, call, input, true, format) };
     }
     if (std.mem.eql(u8, call.name, "table")) {
         if (call.arg != null) return badArg(alloc, d, template, call, "filter 'table' takes no arguments", .{});
-        return .{ .string = try emitTable(alloc, d, template, call, input) };
+        return .{ .string = try emitTable(alloc, d, template, call, input, format) };
     }
 
     // Unreachable: the registry check above guarantees every name is
@@ -309,6 +312,69 @@ fn repeatChar(alloc: std.mem.Allocator, c: u8, n: usize) error{OutOfMemory}![]u8
     return out;
 }
 
+/// Escape user text inside Markdown constructs, but not the markup emitted by
+/// an earlier filter in the same pipeline (`italic | h2`, `code | bold`).
+fn escapeMarkdown(alloc: std.mem.Allocator, text: []const u8) error{OutOfMemory}![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(alloc);
+    for (text) |c| {
+        if (c == '&') {
+            try out.appendSlice(alloc, "&amp;");
+        } else {
+            const at_line_start = out.items.len == 0 or out.items[out.items.len - 1] == '\n';
+            if (std.mem.indexOfScalar(u8, "\\`*_[]<>", c) != null or
+                (at_line_start and std.mem.indexOfScalar(u8, "#+-", c) != null))
+                try out.append(alloc, '\\');
+            try out.append(alloc, c);
+        }
+    }
+    return out.toOwnedSlice(alloc);
+}
+
+fn escapeUrl(alloc: std.mem.Allocator, url: []const u8) error{OutOfMemory}![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(alloc);
+    for (url) |c| {
+        if (c == '(' or c == ')' or c == '\\') try out.append(alloc, '\\');
+        try out.append(alloc, c);
+    }
+    return out.toOwnedSlice(alloc);
+}
+
+fn markdownEmphasis(alloc: std.mem.Allocator, text: []const u8, marker: []const u8) error{OutOfMemory}![]u8 {
+    const start = std.mem.indexOfNone(u8, text, " \t") orelse return alloc.dupe(u8, text);
+    const end = (std.mem.lastIndexOfNone(u8, text, " \t") orelse unreachable) + 1;
+    return std.fmt.allocPrint(alloc, "{s}{s}{s}{s}{s}", .{
+        text[0..start], marker, text[start..end], marker, text[end..],
+    });
+}
+
+/// Delimiters must be longer than any run of backticks in the content. Code
+/// spans with boundary spaces/backticks need padding under CommonMark 0.31.2.
+fn inlineCode(alloc: std.mem.Allocator, text: []const u8) error{OutOfMemory}![]u8 {
+    const ticks = try repeatChar(alloc, '`', @max(@as(usize, 1), longestRun(text, '`') + 1));
+    const pad = text.len > 0 and (text[0] == '`' or text[0] == ' ' or text[text.len - 1] == '`' or text[text.len - 1] == ' ');
+    return if (pad)
+        std.fmt.allocPrint(alloc, "{s} {s} {s}", .{ ticks, text, ticks })
+    else
+        std.fmt.allocPrint(alloc, "{s}{s}{s}", .{ ticks, text, ticks });
+}
+
+fn codeFence(alloc: std.mem.Allocator, text: []const u8) error{OutOfMemory}![]u8 {
+    const ticks = try repeatChar(alloc, '`', @max(@as(usize, 3), longestRun(text, '`') + 1));
+    return std.fmt.allocPrint(alloc, "{s}\n{s}\n{s}", .{ ticks, text, ticks });
+}
+
+fn longestRun(text: []const u8, char: u8) usize {
+    var longest: usize = 0;
+    var run: usize = 0;
+    for (text) |c| {
+        run = if (c == char) run + 1 else 0;
+        longest = @max(longest, run);
+    }
+    return longest;
+}
+
 fn emitList(
     alloc: std.mem.Allocator,
     d: *diag.Diagnostic,
@@ -316,6 +382,7 @@ fn emitList(
     call: parse.FilterCall,
     input: std.json.Value,
     ordered: bool,
+    format: Format,
 ) error{ Template, OutOfMemory }![]u8 {
     const arr = switch (input) {
         .array => |a| a,
@@ -323,7 +390,7 @@ fn emitList(
     };
     var buf = std.ArrayList(u8).empty;
     errdefer buf.deinit(alloc);
-    try emitListLevel(alloc, d, template, call, arr.items, ordered, 1, &buf);
+    try emitListLevel(alloc, d, template, call, arr.items, ordered, format, 1, &buf);
     return buf.toOwnedSlice(alloc);
 }
 
@@ -334,10 +401,13 @@ fn emitListLevel(
     call: parse.FilterCall,
     items: []const std.json.Value,
     ordered: bool,
+    format: Format,
     depth: usize,
     buf: *std.ArrayList(u8),
 ) error{ Template, OutOfMemory }!void {
     var first = true;
+    var has_parent = false;
+    var number: usize = 0;
     for (items) |item| {
         switch (item) {
             .array => |sub| {
@@ -345,16 +415,23 @@ fn emitListLevel(
                 if (sub.items.len == 0) continue;
                 if (!first) try buf.append(alloc, '\n');
                 first = false;
-                try emitListLevel(alloc, d, template, call, sub.items, ordered, depth + 1, buf);
+                // A nested array with no preceding parent item cannot form a
+                // nested CommonMark list; promote its items to this level.
+                const child_depth = if (format == .markdown and !has_parent) depth else depth + 1;
+                try emitListLevel(alloc, d, template, call, sub.items, ordered, format, child_depth, buf);
             },
             .object => return failRender(alloc, d, template, call.offset, "filter '{s}' expects list items to be text or nested arrays", .{call.name}),
             else => {
                 if (!first) try buf.append(alloc, '\n');
                 first = false;
-                if (markdown_mode) {
+                has_parent = true;
+                if (format == .markdown) {
                     var indent = depth;
-                    while (indent > 1) : (indent -= 1) try buf.appendSlice(alloc, "  ");
-                    try buf.appendSlice(alloc, if (ordered) "1. " else "- ");
+                    while (indent > 1) : (indent -= 1) try buf.appendSlice(alloc, if (ordered) "   " else "\t");
+                    if (ordered) {
+                        number += 1;
+                        try buf.appendSlice(alloc, try std.fmt.allocPrint(alloc, "{d}. ", .{number}));
+                    } else try buf.appendSlice(alloc, "- ");
                 } else {
                     const marker: u8 = if (ordered) '#' else '*';
                     var count = depth;
@@ -362,7 +439,7 @@ fn emitListLevel(
                     try buf.append(alloc, ' ');
                 }
                 const t = (try scalarText(alloc, item)).?;
-                try buf.appendSlice(alloc, t);
+                try buf.appendSlice(alloc, if (format == .markdown) try escapeMarkdown(alloc, t) else t);
             },
         }
     }
@@ -374,6 +451,7 @@ fn emitTable(
     template: []const u8,
     call: parse.FilterCall,
     input: std.json.Value,
+    format: Format,
 ) error{ Template, OutOfMemory }![]u8 {
     const rows = switch (input) {
         .array => |a| a,
@@ -399,22 +477,7 @@ fn emitTable(
         if (row.items.len != width) {
             return failRender(alloc, d, template, call.offset, "filter 'table' expects every row to have the same number of cells (row {d} has {d}, expected {d})", .{ r + 1, row.items.len, width });
         }
-        if (markdown_mode) {
-            try buf.append(alloc, '|');
-            for (row.items) |cell| {
-                const t = (try scalarText(alloc, cell)) orelse
-                    return failRender(alloc, d, template, call.offset, "filter 'table' expects text cells", .{});
-                try buf.append(alloc, ' ');
-                try buf.appendSlice(alloc, t);
-                try buf.appendSlice(alloc, " |");
-            }
-            if (r == 0) {
-                try buf.append(alloc, '\n');
-                var col: usize = 0;
-                while (col < width) : (col += 1) try buf.appendSlice(alloc, "|---");
-                try buf.append(alloc, '|');
-            }
-        } else {
+        if (format == .textile) {
             try buf.append(alloc, '|');
             for (row.items) |cell| {
                 const t = (try scalarText(alloc, cell)) orelse
@@ -429,7 +492,38 @@ fn emitTable(
                 try buf.appendSlice(alloc, t);
                 try buf.append(alloc, '|');
             }
+        } else {
+            // CommonMark has no pipe tables. An HTML table is a block-level
+            // CommonMark construct; never emit a GFM-only pipe table here.
+            if (r == 0) {
+                try buf.appendSlice(alloc, "<table>\n<thead>\n");
+            } else if (r == 1) {
+                try buf.appendSlice(alloc, "</thead>\n<tbody>\n");
+            }
+            try buf.appendSlice(alloc, "<tr>");
+            for (row.items) |cell| {
+                const t = (try scalarText(alloc, cell)) orelse
+                    return failRender(alloc, d, template, call.offset, "filter 'table' expects text cells", .{});
+                if (std.mem.indexOfAny(u8, t, "|\n") != null) {
+                    return failRender(alloc, d, template, call.offset, "filter 'table' cell must not contain '|' or a newline", .{});
+                }
+                try buf.appendSlice(alloc, if (r == 0) "<th>" else "<td>");
+                for (t) |c| {
+                    try buf.appendSlice(alloc, switch (c) {
+                        '&' => "&amp;",
+                        '<' => "&lt;",
+                        '>' => "&gt;",
+                        '"' => "&quot;",
+                        else => &.{c},
+                    });
+                }
+                try buf.appendSlice(alloc, if (r == 0) "</th>" else "</td>");
+            }
+            try buf.appendSlice(alloc, "</tr>");
         }
+    }
+    if (format == .markdown) {
+        try buf.appendSlice(alloc, if (rows.items.len > 1) "\n</tbody>\n</table>" else "\n</thead>\n</table>");
     }
     return buf.toOwnedSlice(alloc);
 }
