@@ -231,6 +231,15 @@ The GFM format changes only that row of the registry.
 | `numbered` | — | `# item`; nested `##`/`###` | `1. item`, `2. item`; nested ordered lists |
 | `table` | — | `\|_. name\|` then `\|Ada\|` | `<table>` with `<thead>`, `<tbody>`, escaped cells |
 
+In Markdown and GFM, `code` emits nothing for empty input. All-space input
+remains a code span containing exactly the original spaces, without padding.
+Other nonempty code retains its boundary spaces and backticks, including
+`" a "`; it is not trimmed to match knap. `codeblock` preserves every existing
+terminal newline. Nonempty content without a terminal newline needs one before
+the closing fence, so its parsed code content ends in one newline. Empty
+content produces an empty fenced block, not a blank code line. Textile emission
+is unchanged.
+
 Error conditions (all produce a message with kind, line, and column):
 
 - Unknown filter name, or an argument where none is allowed / missing where
@@ -345,9 +354,9 @@ locally with `tools/verify.sh --update-readme`.
 <!-- verify-table:start -->
 | Mode | Result |
 | --- | --- |
-| `normal` | 45 passed, 0 failed |
-| `passthrough` | 0 passed, 45 failed |
-| `markdown` | 0 passed, 45 failed |
+| `normal` | 47 passed, 0 failed |
+| `passthrough` | 0 passed, 47 failed |
+| `markdown` | 0 passed, 47 failed |
 <!-- verify-table:end -->
 
 CI runs builds and tests on Linux and macOS at Zig 0.16.0. The verification
@@ -394,7 +403,10 @@ Changing these in only one backend would violate the shared template and data
 contract. The differential suite has zero divergences **in its compatible
 corpus**, not over the entire language. Markdown-only adversarial tests also
 check that punctuation and HTML in data cannot silently turn headings,
-emphasis or list items into different CommonMark nodes.
+emphasis or list items into different CommonMark nodes. Code-content
+regressions check empty and all-space spans, preserved boundary spaces and
+backticks, and fences with zero, one, or multiple terminal newlines through
+Oliver, with identical GFM/Markdown bytes.
 
 `examples/table` and `fixtures/filter-table-basic` now byte-match knap 0.6.0
 under `--format gfm` against committed `.gfm` expectations. They are not
