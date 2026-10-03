@@ -494,7 +494,11 @@ The conflicts are:
 
 Changing these in only one backend would violate the shared template and data
 contract. The differential suite has zero divergences **in its compatible
-corpus**, not over the entire language. Markdown-only adversarial tests also
+corpus**, not over the entire language. The same job also runs `k4o lint`
+over every case template — the backend's own fixtures: ok cases must lint
+clean without data, and the deliberately broken cases must be rejected with
+teaching output (data-dependent breakage like a loop over a non-array stays
+invisible to a static lint and is checked at render time instead). Markdown-only adversarial tests also
 check that punctuation and HTML in data cannot silently turn headings,
 emphasis or list items into different CommonMark nodes. Code-content
 regressions check empty and all-space spans, preserved boundary spaces and

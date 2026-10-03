@@ -35,6 +35,10 @@ EXCLUDED_FIXTURES = {
 
 GFM_FIXTURES = {"examples/table", "fixtures/filter-table-basic"}
 
+# Error cases whose failure needs data, so a static lint sees nothing. Every
+# other error case must be rejected by `k4o lint` with teaching output.
+LINT_DATA_DEPENDENT = {"loop-nonarray"}
+
 
 class Tags(HTMLParser):
     def __init__(self):
@@ -409,6 +413,29 @@ def run(k4o, knap, oliver):
             else:
                 assert tags.code_contents == [content], (
                     f"{name}: code content changed: expected {content!r}, got {tags.code_contents!r}"
+                )
+            checks += 1
+        # k4o lint must pass the markdown backend's own fixtures: every ok
+        # case lints clean without data, and every statically-broken case is
+        # rejected with education-grade output (construct, why, example).
+        # Data-dependent breakage stays invisible to lint and is checked at
+        # render time above.
+        for case in cases:
+            name = case["name"]
+            path.write_text(case["template"])
+            linted = invoke([k4o, "lint", str(path)])
+            if case.get("status", "ok") == "error" and name not in LINT_DATA_DEPENDENT:
+                assert linted.returncode != 0 and not linted.stderr, (
+                    f"lint {name}: broken template must be rejected, got {linted.returncode}: {linted.stdout!r}"
+                )
+                stdout = linted.stdout.decode()
+                for teaching in ("construct:", "why:", "example:"):
+                    assert teaching in stdout, (
+                        f"lint {name}: missing teaching line {teaching!r} in {stdout!r}"
+                    )
+            else:
+                assert linted.returncode == 0 and not linted.stderr, (
+                    f"lint {name}: expected clean lint, got {linted.returncode}: {linted.stdout!r}"
                 )
             checks += 1
     print(f"PASS {checks} cases: {len(fixture_paths) - len(EXCLUDED_FIXTURES) + len(cases)} "
