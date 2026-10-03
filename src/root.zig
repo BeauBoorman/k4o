@@ -12,6 +12,7 @@ pub const parse = @import("parse.zig");
 pub const filters = @import("filters.zig");
 pub const engine = @import("engine.zig");
 pub const lint = @import("lint.zig");
+pub const init = @import("init.zig");
 
 pub const Diagnostic = diag.Diagnostic;
 pub const render = engine.render;

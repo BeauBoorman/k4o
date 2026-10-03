@@ -2,13 +2,16 @@
 //!
 //!     k4o render <template.knap> [--data <data.json>] [--format textile|markdown|gfm]
 //!     k4o lint <template.knap> [<template.knap> ...]
+//!     k4o init
 //!     k4o --help
 //!     k4o --version
 //!
 //! Exit codes: 0 = success, 1 = any error. On error the message goes to
 //! stderr and stdout stays empty — rendering is buffered, so partially
 //! rendered output is never emitted. `lint` reports findings on stdout and
-//! exits 0 when every file is clean, 1 otherwise.
+//! exits 0 when every file is clean, 1 otherwise. `init` reports what it
+//! created, left untouched, or archived, and exits 0 unless the filesystem
+//! fails.
 
 const std = @import("std");
 const kt = @import("k4o");
@@ -22,6 +25,7 @@ const usage_text =
     \\Usage:
     \\  k4o render <template.knap> [--data <data.json>] [--format textile|markdown|gfm]
     \\  k4o lint <template.knap> [<template.knap> ...]
+    \\  k4o init
     \\  k4o --help
     \\  k4o --version
     \\
@@ -33,6 +37,12 @@ const usage_text =
     \\                      an example of right. Exit 0 when every file is
     \\                      clean, 1 when any file has findings or cannot be
     \\                      read. Findings go to stdout.
+    \\  init                Drop the knap teaching files (language tour,
+    \\                      templates, examples, gotchas) into the working
+    \\                      dir so an agent can pull knap-into-context.
+    \\                      Strictly additive: only files that do not exist
+    \\                      are created, and a superseded init file is
+    \\                      archived (never overwritten, never deleted).
     \\
     \\Options:
     \\  --data, -d <file>   JSON object with the template variables
@@ -76,6 +86,7 @@ pub fn main(init: std.process.Init) !u8 {
         return 0;
     }
     if (std.mem.eql(u8, first, "lint")) return runLint(init, args.items[1..]);
+    if (std.mem.eql(u8, first, "init")) return runInit(init, args.items[1..]);
     if (!std.mem.eql(u8, first, "render")) return usage(init, "unknown command");
     if (args.items.len == 1) return usage(init, "missing template file");
 
@@ -245,6 +256,59 @@ fn runLint(init: std.process.Init, args: [][]const u8) !u8 {
     w.interface.writeAll(report_buf.items) catch return 1;
     w.flush() catch return 1;
     return if (problems == 0 and unreadable == 0) 0 else 1;
+}
+
+/// `k4o init`: drop the knap teaching files into the working dir.
+/// Strictly additive — existing files are never overwritten (an older
+/// init-marked file is archived first). Exit 0 unless the filesystem fails.
+fn runInit(init: std.process.Init, args: [][]const u8) !u8 {
+    const arena = init.arena.allocator();
+
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            try printStdout(init, usage_text);
+            return 0;
+        }
+        return usage(init, "init takes no arguments");
+    }
+
+    var reports: std.ArrayList(kt.init.Report) = .empty;
+    defer reports.deinit(arena);
+    kt.init.scaffold(arena, init.io, .cwd(), &reports) catch |e| {
+        report("init failed: {s}", .{@errorName(e)});
+        return 1;
+    };
+
+    var out_buf: [8192]u8 = undefined;
+    var w = std.Io.File.stdout().writer(init.io, &out_buf);
+    var created: usize = 0;
+    var untouched: usize = 0;
+    var archived: usize = 0;
+    for (reports.items) |r| {
+        switch (r.action) {
+            .created => {
+                created += 1;
+                try w.interface.print("created {s}\n", .{r.file});
+            },
+            .up_to_date => {
+                untouched += 1;
+                try w.interface.print("{s} is current (v{d})\n", .{ r.file, r.disk_version.? });
+            },
+            .left_untouched => {
+                untouched += 1;
+                try w.interface.print("{s} exists, left untouched\n", .{r.file});
+            },
+            .archived => {
+                archived += 1;
+                try w.interface.print("{s} superseded (v{d} -> v{d}); old copy archived to {s}\n", .{ r.file, r.disk_version.?, kt.init.set_version, r.archive_path.? });
+            },
+        }
+    }
+    var summary_buf: [256]u8 = undefined;
+    const summary = try std.fmt.bufPrint(&summary_buf, "k4o init: {d} created, {d} untouched, {d} archived\n", .{ created, untouched, archived });
+    try w.interface.writeAll(summary);
+    try w.flush();
+    return 0;
 }
 
 fn parseFormat(name: []const u8) ?kt.Format {
