@@ -771,6 +771,195 @@ test "lint: paren nesting beyond the limit is a finding" {
     try assertTextileDialect();
 }
 
+// ---- k4o init --------------------------------------------------------------
+
+var init_test_counter: u32 = 0;
+
+const TempDir = struct {
+    dir: std.Io.Dir,
+    name: []const u8,
+};
+
+/// Creates a unique throwaway directory under the cwd and returns an open
+/// handle plus its name; the caller deletes the tree when done.
+fn makeInitTempDir(name_buf: []u8) !TempDir {
+    const io = std.testing.io;
+    init_test_counter += 1;
+    const name = try std.fmt.bufPrint(name_buf, ".k4o-init-test-{d}", .{init_test_counter});
+    const cwd = std.Io.Dir.cwd();
+    cwd.deleteTree(io, name) catch {}; // stale from a crashed run
+    try cwd.createDirPath(io, name);
+    return .{ .dir = try cwd.openDir(io, name, .{}), .name = name };
+}
+
+test "init: the teaching-file set is internally consistent" {
+    for (kt.init.files) |def| {
+        try testing.expect(def.content.len > 0);
+        try testing.expectEqual(@as(u8, '\n'), def.content[def.content.len - 1]);
+        const marker = kt.init.parseMarker(def.content) orelse {
+            std.debug.print("init file '{s}': missing or malformed marker line\n", .{def.name});
+            return error.TestUnexpectedResult;
+        };
+        try testing.expectEqualStrings(kt.init.markerName(def.name), marker.name);
+        try testing.expectEqual(def.version, marker.version);
+    }
+    // The tour must teach every filter in the registry: init exists because
+    // agents hallucinate knap, so the set of names it teaches is the set the
+    // engine implements — no more, no fewer.
+    var tour: []const u8 = "";
+    for (kt.init.files) |def| {
+        if (std.mem.eql(u8, def.name, "knap-tour.md")) tour = def.content;
+    }
+    try testing.expect(tour.len > 0);
+    var buf: [32]u8 = undefined;
+    for (kt.filters.registry()) |entry| {
+        const name = try std.fmt.bufPrint(&buf, "{s}", .{entry.name});
+        if (std.mem.indexOf(u8, tour, name) == null) {
+            std.debug.print("knap-tour.md never mentions the '{s}' filter\n", .{entry.name});
+            return error.TestUnexpectedResult;
+        }
+    }
+    try assertTextileDialect();
+}
+
+test "init: parseMarker accepts the marker shape and rejects junk" {
+    const good = kt.init.parseMarker("<!-- k4o init knap-tour v1 -->\nbody");
+    try testing.expect(good != null);
+    try testing.expectEqualStrings("knap-tour", good.?.name);
+    try testing.expectEqual(@as(u32, 1), good.?.version);
+    // A file that is exactly one marker line (no trailing newline).
+    const bare = kt.init.parseMarker("<!-- k4o init knap-tour v12 -->");
+    try testing.expect(bare != null and bare.?.version == 12);
+    try testing.expect(kt.init.parseMarker("no marker here\n") == null);
+    try testing.expect(kt.init.parseMarker("") == null);
+    try testing.expect(kt.init.parseMarker("<!-- k4o init  v1 -->\n") == null);
+    try testing.expect(kt.init.parseMarker("<!-- k4o init knap-tour vX -->\n") == null);
+    try testing.expect(kt.init.parseMarker("<!-- k4o init knap-tour -->\n") == null);
+    try testing.expect(kt.init.parseMarker("<!-- someone else's marker -->\n") == null);
+    try assertTextileDialect();
+}
+
+test "init: decide covers the whole decision table" {
+    const def = kt.init.files[0];
+    try testing.expectEqual(kt.init.Decision.create, kt.init.decide(false, null, def));
+    try testing.expectEqual(kt.init.Decision.up_to_date, kt.init.decide(true, .{ .name = "knap-tour", .version = 1 }, def));
+    try testing.expectEqual(kt.init.Decision.archive_and_write, kt.init.decide(true, .{ .name = "knap-tour", .version = 0 }, def));
+    // No marker, foreign marker, or newer version: never touched.
+    try testing.expectEqual(kt.init.Decision.left_untouched, kt.init.decide(true, null, def));
+    try testing.expectEqual(kt.init.Decision.left_untouched, kt.init.decide(true, .{ .name = "something-else", .version = 0 }, def));
+    try testing.expectEqual(kt.init.Decision.left_untouched, kt.init.decide(true, .{ .name = "knap-tour", .version = 99 }, def));
+    try assertTextileDialect();
+}
+
+test "init: fresh dir creates every file, rerun changes nothing" {
+    const io = std.testing.io;
+    var name_buf: [64]u8 = undefined;
+    var td = try makeInitTempDir(&name_buf);
+    defer std.Io.Dir.cwd().deleteTree(io, td.name) catch {};
+    defer td.dir.close(io);
+    var dir = td.dir;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var reports: std.ArrayList(kt.init.Report) = .empty;
+    try kt.init.scaffold(arena, io, dir, &reports);
+    try testing.expectEqual(kt.init.files.len, reports.items.len);
+    for (reports.items) |r| {
+        try testing.expectEqual(kt.init.Action.created, r.action);
+    }
+    // Files on disk are byte-identical to the embedded content.
+    for (kt.init.files) |def| {
+        const got = try dir.readFileAlloc(io, def.name, arena, .limited(1 << 20));
+        try testing.expectEqualStrings(def.content, got);
+    }
+
+    var rerun: std.ArrayList(kt.init.Report) = .empty;
+    try kt.init.scaffold(arena, io, dir, &rerun);
+    for (rerun.items) |r| {
+        try testing.expectEqual(kt.init.Action.up_to_date, r.action);
+    }
+    try assertTextileDialect();
+}
+
+test "init: user files are never touched, superseded init files are archived" {
+    const io = std.testing.io;
+    var name_buf: [64]u8 = undefined;
+    var td = try makeInitTempDir(&name_buf);
+    defer std.Io.Dir.cwd().deleteTree(io, td.name) catch {};
+    defer td.dir.close(io);
+    var dir = td.dir;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var first: std.ArrayList(kt.init.Report) = .empty;
+    try kt.init.scaffold(arena, io, dir, &first);
+    try testing.expectEqual(kt.init.files.len, first.items.len);
+
+    // A user-owned teaching file (marker stripped by edits, or simply not
+    // ours), and a stale init file two versions back.
+    const user_bytes = "random user content\n";
+    try dir.writeFile(io, .{ .sub_path = "knap-gotchas.md", .data = user_bytes });
+    const old_bytes = "<!-- k4o init knap-tour v0 -->\n# old tour\nstale bytes\n";
+    try dir.writeFile(io, .{ .sub_path = "knap-tour.md", .data = old_bytes });
+
+    var reports: std.ArrayList(kt.init.Report) = .empty;
+    try kt.init.scaffold(arena, io, dir, &reports);
+    for (reports.items) |r| {
+        if (std.mem.eql(u8, r.file, "knap-tour.md")) {
+            try testing.expectEqual(kt.init.Action.archived, r.action);
+            try testing.expectEqual(@as(u32, 0), r.disk_version.?);
+            const path = r.archive_path.?;
+            try testing.expect(std.mem.startsWith(u8, path, "k4o-archive/"));
+            const archived = try dir.readFileAlloc(io, path, arena, .limited(1 << 20));
+            try testing.expectEqualStrings(old_bytes, archived);
+        } else if (std.mem.eql(u8, r.file, "knap-gotchas.md")) {
+            try testing.expectEqual(kt.init.Action.left_untouched, r.action);
+        } else {
+            try testing.expectEqual(kt.init.Action.up_to_date, r.action);
+        }
+    }
+    // The old copy went to the archive and the live file carries the new
+    // content; the user file is byte-intact.
+    const tour_def = for (kt.init.files) |def| {
+        if (std.mem.eql(u8, def.name, "knap-tour.md")) break def;
+    } else unreachable;
+    const live = try dir.readFileAlloc(io, "knap-tour.md", arena, .limited(1 << 20));
+    try testing.expectEqualStrings(tour_def.content, live);
+    const user_now = try dir.readFileAlloc(io, "knap-gotchas.md", arena, .limited(1 << 20));
+    try testing.expectEqualStrings(user_bytes, user_now);
+    try assertTextileDialect();
+}
+
+test "init: a newer marker than this build ships is left untouched" {
+    const io = std.testing.io;
+    var name_buf: [64]u8 = undefined;
+    var td = try makeInitTempDir(&name_buf);
+    defer std.Io.Dir.cwd().deleteTree(io, td.name) catch {};
+    defer td.dir.close(io);
+    var dir = td.dir;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const future_bytes = "<!-- k4o init knap-tour v99 -->\nfrom the future\n";
+    try dir.writeFile(io, .{ .sub_path = "knap-tour.md", .data = future_bytes });
+    var reports: std.ArrayList(kt.init.Report) = .empty;
+    try kt.init.scaffold(arena, io, dir, &reports);
+    var untouched = false;
+    for (reports.items) |r| {
+        if (std.mem.eql(u8, r.file, "knap-tour.md")) {
+            untouched = true;
+            try testing.expectEqual(kt.init.Action.left_untouched, r.action);
+        }
+    }
+    try testing.expect(untouched);
+    const got = try dir.readFileAlloc(io, "knap-tour.md", arena, .limited(1 << 20));
+    try testing.expectEqualStrings(future_bytes, got);
+    try assertTextileDialect();
+}
+
 test "property: every registry filter has at least one fixture case" {
     var buf: [64]u8 = undefined;
     for (kt.filters.registry()) |entry| {

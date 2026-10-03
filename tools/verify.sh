@@ -17,6 +17,9 @@
 #   8. lint smoke: the clean fixture corpus lints clean, a broken template
 #      is rejected with teaching output (rule, construct, why, example),
 #      and an unreadable file fails with a diagnostic
+#   9. init smoke: teaching files drop into a working dir, a rerun is
+#      idempotent, a superseded init file is archived with a reported
+#      timestamped path, and a user file is never touched
 #
 # Logs are written under $KT_VERIFY_DIR (default: a unique directory in
 # TMPDIR) and are kept for inspection.
@@ -255,6 +258,18 @@ else
   tail -n 5 "$LINT_ERR" | sed 's/^/      | /'
   fail_count=$((fail_count + 1))
 fi
+
+# init: the whole lifecycle — create, idempotent rerun, supersede-with-archive,
+# and the never-touch-user-files rule — in throwaway sandboxes.
+INIT_FRESH="$VERIFY_DIR/34-init-fresh"
+INIT_SUPER="$VERIFY_DIR/35-init-supersede"
+rm -rf "$INIT_FRESH" "$INIT_SUPER" && mkdir -p "$INIT_FRESH" "$INIT_SUPER"
+check_zero "init: teaching files drop into a working dir" "$VERIFY_DIR/34-init-fresh.log" \
+  bash -c "cd '$INIT_FRESH' && '$BIN' init && test -f knap-tour.md && test -f knap-templates.md && test -f knap-examples.md && test -f knap-gotchas.md"
+check_zero "init: a rerun is idempotent" "$VERIFY_DIR/34-init-rerun.log" \
+  bash -c "cd '$INIT_FRESH' && '$BIN' init | grep -q '0 created, 4 untouched, 0 archived'"
+check_zero "init: supersede archives and user files are untouched" "$VERIFY_DIR/35-init-supersede.log" \
+  bash -c "cd '$INIT_SUPER' && '$BIN' init >/dev/null && printf 'random user content\n' > knap-gotchas.md && printf '<!-- k4o init knap-tour v0 -->\n# old tour\n' > knap-tour.md && '$BIN' init > init.out && grep -q 'archived to k4o-archive/' init.out && grep -q 'knap-tour v1' knap-tour.md && cmp -s 'k4o-archive'/*/knap-tour.md <(printf '<!-- k4o init knap-tour v0 -->\n# old tour\n') && cmp -s knap-gotchas.md <(printf 'random user content\n')"
 
 check_zero "static x86_64-linux-musl build is statically linked" "$VERIFY_DIR/14-static.log" \
   bash -c "'$ZIG' build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-musl --prefix '$VERIFY_DIR/static' && file '$VERIFY_DIR/static/bin/k4o' | grep -q 'statically linked'"

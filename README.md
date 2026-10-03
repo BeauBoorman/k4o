@@ -39,6 +39,7 @@ zig-out/bin/k4o render template.knap --data=data.json --format markdown
 zig-out/bin/k4o render template.knap --data=data.json --format gfm
 zig-out/bin/k4o lint template.knap
 zig-out/bin/k4o lint one.knap two.knap
+zig-out/bin/k4o init
 zig-out/bin/k4o --help
 zig-out/bin/k4o --version
 ```
@@ -254,6 +255,51 @@ k4o lint: 1 problem(s) in 1 of 1 file(s)
   and the dedicated `fixtures/lint/*.knap` rules) is rejected with the
   expected rule named. `tools/verify.sh` asserts both on every run.
 
+## k4o init
+
+`k4o init` drops knap teaching files (language tour, templates, examples,
+gotchas) into the working dir so an agent can pull knap-into-context when
+doing knap work — no prompt bloat, no training-data dependency. It teaches;
+nothing else: rendering is oliver's job and building sites is dogbed's job.
+
+```sh
+zig-out/bin/k4o init
+```
+
+```text
+created knap-tour.md
+created knap-templates.md
+created knap-examples.md
+created knap-gotchas.md
+k4o init: 4 created, 0 untouched, 0 archived
+```
+
+The poop rules (load-bearing):
+
+- **Look for poop; if nah, take a poop.** Only files that don't exist are
+  created. A rerun in the same dir changes nothing and says so.
+- **Never overwrite an existing file, modified or not.** Existence is the
+  only test — no manifest, no checksums, no "was it modified" detective
+  work. init is strictly additive, forever.
+- **When init supersedes an old file with a new one: archive, don't
+  replace.** A future k4o that ships new teaching content identifies its own
+  old copies by the embedded `<!-- k4o init <name> v<N> -->` marker line,
+  moves them to a timestamped `k4o-archive/<UTC timestamp>/` directory, and
+  reports the location in the output. Bag it, don't curb it — and
+  especially no trash day: no auto-expiry, no "archives older than N days
+  get purged". Nobody should ever have to ask where their shit went.
+
+The marker is what keeps the second rule absolute: a file without a
+recognizable marker — a user file, or a teaching file edited past
+recognition — is never touched at all, and neither is a copy whose marker
+claims a version newer than this build ships. The teaching content covers
+knap knowledge only and is pinned by tests: the tour must mention every
+filter the registry implements, and every template shown in it must lint
+and render exactly as claimed.
+
+Exit 0 unless the filesystem fails; anything else is exit 1 with the error
+on stderr.
+
 ## Filter registry → output formats
 
 This is the complete registry (15 names). The fixture corpus pins all three
@@ -398,9 +444,9 @@ locally with `tools/verify.sh --update-readme`.
 <!-- verify-table:start -->
 | Mode | Result |
 | --- | --- |
-| `normal` | 57 passed, 0 failed |
-| `passthrough` | 0 passed, 57 failed |
-| `markdown` | 0 passed, 57 failed |
+| `normal` | 63 passed, 0 failed |
+| `passthrough` | 0 passed, 63 failed |
+| `markdown` | 0 passed, 63 failed |
 <!-- verify-table:end -->
 
 CI runs builds and tests on Linux and macOS at Zig 0.16.0. The verification
@@ -413,7 +459,8 @@ passthrough output nor Markdown emission can satisfy it.
 `tools/verify.sh` runs all of the above plus CLI smoke checks (the three
 examples compared byte-for-byte; error paths exit 1 with empty stdout), lint
 smoke checks (the clean corpus lints clean; broken templates are rejected
-with the expected teaching rule) and a static cross-build check
+with the expected teaching rule), init smoke checks (create, idempotent
+rerun, supersede-with-archive, user files untouched) and a static cross-build check
 (`-Dtarget=x86_64-linux-musl`, verified with
 `file(1)` as "statically linked"; the macOS host build links the system libc,
 which is a platform constraint).
