@@ -11,6 +11,7 @@ pub const diag = @import("diag.zig");
 pub const parse = @import("parse.zig");
 pub const filters = @import("filters.zig");
 pub const engine = @import("engine.zig");
+pub const lint = @import("lint.zig");
 
 pub const Diagnostic = diag.Diagnostic;
 pub const render = engine.render;
@@ -20,3 +21,5 @@ pub const renderFormatWithLimit = engine.renderFormatWithLimit;
 pub const Format = engine.Format;
 pub const default_max_output = engine.default_max_output;
 pub const Error = engine.Error;
+pub const lintDocument = lint.lintDocument;
+pub const Finding = lint.Finding;

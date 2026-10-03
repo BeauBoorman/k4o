@@ -1,12 +1,14 @@
 //! k4o CLI.
 //!
 //!     k4o render <template.knap> [--data <data.json>] [--format textile|markdown|gfm]
+//!     k4o lint <template.knap> [<template.knap> ...]
 //!     k4o --help
 //!     k4o --version
 //!
 //! Exit codes: 0 = success, 1 = any error. On error the message goes to
 //! stderr and stdout stays empty — rendering is buffered, so partially
-//! rendered output is never emitted.
+//! rendered output is never emitted. `lint` reports findings on stdout and
+//! exits 0 when every file is clean, 1 otherwise.
 
 const std = @import("std");
 const kt = @import("k4o");
@@ -19,8 +21,18 @@ const usage_text =
     \\
     \\Usage:
     \\  k4o render <template.knap> [--data <data.json>] [--format textile|markdown|gfm]
+    \\  k4o lint <template.knap> [<template.knap> ...]
     \\  k4o --help
     \\  k4o --version
+    \\
+    \\Commands:
+    \\  render              Render a template with JSON data (see --data).
+    \\  lint                Check templates against the documented knap
+    \\                      subset without data. Every finding names the
+    \\                      offending construct, explains the rule, and shows
+    \\                      an example of right. Exit 0 when every file is
+    \\                      clean, 1 when any file has findings or cannot be
+    \\                      read. Findings go to stdout.
     \\
     \\Options:
     \\  --data, -d <file>   JSON object with the template variables
@@ -63,6 +75,7 @@ pub fn main(init: std.process.Init) !u8 {
         try printStdout(init, text);
         return 0;
     }
+    if (std.mem.eql(u8, first, "lint")) return runLint(init, args.items[1..]);
     if (!std.mem.eql(u8, first, "render")) return usage(init, "unknown command");
     if (args.items.len == 1) return usage(init, "missing template file");
 
@@ -165,6 +178,73 @@ pub fn main(init: std.process.Init) !u8 {
     w.interface.writeAll(out) catch return 1;
     w.flush() catch return 1;
     return 0;
+}
+
+/// `k4o lint <template.knap> [...]`: education-grade diagnostics over the
+/// shared parser. Findings go to stdout; exit 0 when every file is clean,
+/// 1 when any file has findings or cannot be read.
+fn runLint(init: std.process.Init, args: [][]const u8) !u8 {
+    const arena = init.arena.allocator();
+
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer paths.deinit(init.gpa);
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            try printStdout(init, usage_text);
+            return 0;
+        } else if (arg.len > 1 and arg[0] == '-') {
+            return usage(init, "unknown option");
+        } else {
+            try paths.append(init.gpa, arg);
+        }
+    }
+    if (paths.items.len == 0) return usage(init, "missing template file");
+
+    var report_buf: std.ArrayList(u8) = .empty;
+    defer report_buf.deinit(init.gpa);
+    var problems: usize = 0;
+    var findings_files: usize = 0;
+    var unreadable: usize = 0;
+    for (paths.items) |path| {
+        const template = std.Io.Dir.readFileAlloc(.cwd(), init.io, path, arena, .limited(max_input)) catch |e| {
+            report("cannot read template file '{s}': {s}", .{ path, @errorName(e) });
+            unreadable += 1;
+            continue;
+        };
+        var d = kt.Diagnostic{};
+        const findings = kt.lintDocument(arena, template, &d) catch {
+            report("out of memory", .{});
+            return 1;
+        };
+        if (findings.len == 0) continue;
+        findings_files += 1;
+        problems += findings.len;
+        for (findings) |f| {
+            const block = try std.fmt.allocPrint(
+                arena,
+                "{s}:{d}:{d}: {s}: {s}\n  construct: {s}\n  why: {s}\n  example: {s}\n\n",
+                .{ path, f.line, f.column, f.kind.label(), f.detail, f.construct, f.why, f.example },
+            );
+            try report_buf.appendSlice(init.gpa, block);
+        }
+    }
+
+    var out_buf: [8192]u8 = undefined;
+    var w = std.Io.File.stdout().writer(init.io, &out_buf);
+    if (problems == 0 and unreadable == 0) {
+        const summary = try std.fmt.allocPrint(arena, "k4o lint: {d} file(s) clean\n", .{paths.items.len});
+        try report_buf.appendSlice(init.gpa, summary);
+    } else {
+        var summary_buf: [256]u8 = undefined;
+        const summary = if (unreadable > 0)
+            try std.fmt.bufPrint(&summary_buf, "k4o lint: {d} problem(s) in {d} of {d} file(s); {d} file(s) unreadable\n", .{ problems, findings_files, paths.items.len, unreadable })
+        else
+            try std.fmt.bufPrint(&summary_buf, "k4o lint: {d} problem(s) in {d} of {d} file(s)\n", .{ problems, findings_files, paths.items.len });
+        try report_buf.appendSlice(init.gpa, summary);
+    }
+    w.interface.writeAll(report_buf.items) catch return 1;
+    w.flush() catch return 1;
+    return if (problems == 0 and unreadable == 0) 0 else 1;
 }
 
 fn parseFormat(name: []const u8) ?kt.Format {

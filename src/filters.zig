@@ -250,8 +250,9 @@ const blocked_schemes = [_][]const u8{ "javascript", "vbscript", "data" };
 /// True when `url` starts with a blocked scheme. The scheme grammar is
 /// `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`, so a colon that is not
 /// preceded by a well-formed scheme belongs to the path, not a scheme, and
-/// `:leading-colon` and `a/b:c` are not treated as schemes.
-fn hasBlockedScheme(url: []const u8) bool {
+/// `:leading-colon` and `a/b:c` are not treated as schemes. Public because
+/// lint statically checks literal `link` arguments with the same rule.
+pub fn hasBlockedScheme(url: []const u8) bool {
     const colon = std.mem.indexOfScalar(u8, url, ':') orelse return false;
     const scheme = url[0..colon];
     if (scheme.len == 0 or !std.ascii.isAlphabetic(scheme[0])) return false;
@@ -264,7 +265,9 @@ fn hasBlockedScheme(url: []const u8) bool {
     return false;
 }
 
-fn schemeName(url: []const u8) []const u8 {
+/// The scheme prefix of `url`, or `url` itself when there is no colon.
+/// Public for lint's teaching output.
+pub fn schemeName(url: []const u8) []const u8 {
     const colon = std.mem.indexOfScalar(u8, url, ':') orelse return url;
     return url[0..colon];
 }
