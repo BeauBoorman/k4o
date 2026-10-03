@@ -14,6 +14,9 @@
 #      --data=FILE form with its empty-value and stray-positional errors,
 #      and the --max-output cap tripping on an amplifying render
 #   7. static cross-build for x86_64-linux-musl (file(1): "statically linked")
+#   8. lint smoke: the clean fixture corpus lints clean, a broken template
+#      is rejected with teaching output (rule, construct, why, example),
+#      and an unreadable file fails with a diagnostic
 #
 # Logs are written under $KT_VERIFY_DIR (default: a unique directory in
 # TMPDIR) and are kept for inspection.
@@ -143,6 +146,21 @@ check_cli_stderr() { # desc, logbase, needle, cmd... (expects non-zero, empty st
   fi
 }
 
+check_lint_finding() { # desc, logbase, needle, cmd... (expects non-zero exit, needle on stdout, empty stderr)
+  local desc="$1" logbase="$2" needle="$3"
+  shift 3
+  local rc=0
+  "$@" >"$logbase.out" 2>"$logbase.err" || rc=$?
+  if [ "$rc" -ne 0 ] && [ ! -s "$logbase.err" ] && grep -qF "$needle" "$logbase.out"; then
+    note "PASS  $desc"
+    pass_count=$((pass_count + 1))
+  else
+    note "FAIL  $desc (exit=$rc, expected teaching finding '$needle' on stdout)"
+    tail -n 5 "$logbase.out" | sed 's/^/      | /'
+    fail_count=$((fail_count + 1))
+  fi
+}
+
 BIN="$REPO/zig-out/bin/k4o"
 
 check_zero "zig build" "$VERIFY_DIR/01-build.log" "$ZIG" build
@@ -214,6 +232,29 @@ check_zero "--max-output accepts a suffixed size" "$VERIFY_DIR/20-max-suffix.log
 
 check_zero "--help exits 0" "$VERIFY_DIR/12-help.log" "$BIN" --help
 check_zero "--version exits 0" "$VERIFY_DIR/13-version.log" "$BIN" --version
+
+# Lint: the whole clean corpus (templates that render are templates that
+# parse) plus the teaching path on a broken template.
+check_zero "lint: the fixture corpus is clean" "$VERIFY_DIR/30-lint-corpus.log" \
+  "$BIN" lint "$REPO"/fixtures/*.knap "$REPO"/examples/*.knap
+check_lint_finding "lint: a broken template is rejected with teaching output" "$VERIFY_DIR/31-lint-broken" \
+  "unclosed-if" "$BIN" lint "$REPO/fixtures/errors/err-unclosed-if.knap"
+check_lint_finding "lint: an unknown filter teaches the registry" "$VERIFY_DIR/32-lint-registry" \
+  "unknown-filter" "$BIN" lint "$REPO/fixtures/errors/err-unknown-filter.knap"
+# An unreadable file reports on stderr and still gets the stdout summary,
+# because lint reports on every file it could open before failing overall.
+LINT_OUT="$VERIFY_DIR/33-lint-missing.out"
+LINT_ERR="$VERIFY_DIR/33-lint-missing.err"
+rc=0
+"$BIN" lint "$REPO/does-not-exist.knap" >"$LINT_OUT" 2>"$LINT_ERR" || rc=$?
+if [ "$rc" -ne 0 ] && grep -qF "cannot read template file" "$LINT_ERR" && grep -qF "1 file(s) unreadable" "$LINT_OUT"; then
+  note "PASS  lint: an unreadable file fails with a diagnostic"
+  pass_count=$((pass_count + 1))
+else
+  note "FAIL  lint: an unreadable file fails with a diagnostic (exit=$rc)"
+  tail -n 5 "$LINT_ERR" | sed 's/^/      | /'
+  fail_count=$((fail_count + 1))
+fi
 
 check_zero "static x86_64-linux-musl build is statically linked" "$VERIFY_DIR/14-static.log" \
   bash -c "'$ZIG' build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-musl --prefix '$VERIFY_DIR/static' && file '$VERIFY_DIR/static/bin/k4o' | grep -q 'statically linked'"

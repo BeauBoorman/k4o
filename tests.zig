@@ -7,6 +7,8 @@
 //!    its template, and the engine actually renders Textile — so every test
 //!    in this file fails under `-Dengine-mode=passthrough` (and every
 //!    filter-touching test fails under `-Dengine-mode=markdown`).
+//! 5. Lint: the clean corpus lints clean; every error and lint fixture maps
+//!    to the teaching rule its diagnostic names (`fixtures/lint/*.knap`).
 //!
 //! The three `examples/*` artifacts are part of the corpus (`ex-*`).
 
@@ -552,6 +554,221 @@ test "corpus: error fixtures fail with the pinned message" {
     }
     try assertTextileDialect();
     try testing.expectEqual(@as(usize, 0), failures);
+}
+
+/// Expected lint rule per error fixture. `null` marks fixtures whose failure
+/// is data-dependent: without `--data` there is nothing to see, so lint
+/// reports them clean (lint checks templates, not data).
+const err_lint_rules = [_]struct { name: []const u8, rule: ?[]const u8 }{
+    .{ .name = "err-unclosed-if", .rule = "unclosed-if" },
+    .{ .name = "err-unclosed-for", .rule = "unclosed-for" },
+    .{ .name = "err-unclosed-comment", .rule = "unclosed-comment" },
+    .{ .name = "err-unclosed-output", .rule = "unclosed-output-tag" },
+    .{ .name = "err-unknown-filter", .rule = "unknown-filter" },
+    .{ .name = "err-bad-args-extra", .rule = "filter-arg-unexpected" },
+    .{ .name = "err-bad-args-link-missing", .rule = "link-missing-url" },
+    .{ .name = "err-link-scheme-javascript", .rule = "link-scheme" },
+    .{ .name = "err-link-scheme-from-data", .rule = null },
+    .{ .name = "err-link-scheme-data", .rule = "link-scheme" },
+    .{ .name = "err-arg-resolves-to-object", .rule = null },
+    .{ .name = "err-multiline-bold", .rule = null },
+    .{ .name = "err-ragged-table", .rule = null },
+    .{ .name = "err-deep-list", .rule = null },
+    .{ .name = "err-nonarray-list", .rule = null },
+    .{ .name = "err-loop-nonarray", .rule = null },
+    .{ .name = "err-if-missing-value", .rule = "missing-value" },
+    .{ .name = "err-stray-endif", .rule = "misplaced-closing-tag" },
+    .{ .name = "err-nesting-too-deep", .rule = "nesting-too-deep" },
+};
+
+const lint_broken = [_]struct { name: []const u8, template: []const u8, rule: []const u8 }{
+    .{ .name = "unknown-logic-tag", .template = @embedFile("fixtures/lint/unknown-logic-tag.knap"), .rule = "unknown-logic-tag" },
+    .{ .name = "for-missing-var", .template = @embedFile("fixtures/lint/for-missing-var.knap"), .rule = "for-missing-var" },
+    .{ .name = "for-missing-in", .template = @embedFile("fixtures/lint/for-missing-in.knap"), .rule = "for-missing-in" },
+    .{ .name = "for-trailing-text", .template = @embedFile("fixtures/lint/for-trailing-text.knap"), .rule = "for-trailing-text" },
+    .{ .name = "elseif-after-else", .template = @embedFile("fixtures/lint/elseif-after-else.knap"), .rule = "elseif-after-else" },
+    .{ .name = "duplicate-else", .template = @embedFile("fixtures/lint/duplicate-else.knap"), .rule = "duplicate-else" },
+    .{ .name = "endif-trailing-text", .template = @embedFile("fixtures/lint/endif-trailing-text.knap"), .rule = "closing-tag-trailing-text" },
+    .{ .name = "missing-filter-name", .template = @embedFile("fixtures/lint/missing-filter-name.knap"), .rule = "missing-filter-name" },
+    .{ .name = "output-tag-trailing-text", .template = @embedFile("fixtures/lint/output-tag-trailing-text.knap"), .rule = "output-tag-trailing-text" },
+    .{ .name = "missing-filter-arg", .template = @embedFile("fixtures/lint/missing-filter-arg.knap"), .rule = "missing-filter-arg" },
+    .{ .name = "bracket-key", .template = @embedFile("fixtures/lint/bracket-key.knap"), .rule = "bracket-key" },
+    .{ .name = "bracket-unclosed", .template = @embedFile("fixtures/lint/bracket-unclosed.knap"), .rule = "bracket-unclosed" },
+    .{ .name = "condition-trailing-text", .template = @embedFile("fixtures/lint/condition-trailing-text.knap"), .rule = "condition-trailing-text" },
+    .{ .name = "unclosed-paren", .template = @embedFile("fixtures/lint/unclosed-paren.knap"), .rule = "unclosed-paren" },
+    .{ .name = "invalid-number", .template = @embedFile("fixtures/lint/invalid-number.knap"), .rule = "invalid-number" },
+    .{ .name = "empty-logic-tag", .template = @embedFile("fixtures/lint/empty-logic-tag.knap"), .rule = "empty-logic-tag" },
+    .{ .name = "missing-value", .template = @embedFile("fixtures/lint/missing-value.knap"), .rule = "missing-value" },
+    .{ .name = "link-url-text", .template = @embedFile("fixtures/lint/link-url-text.knap"), .rule = "link-url-text" },
+};
+
+fn expectTeaching(finding: kt.Finding, name: []const u8) !void {
+    if (finding.construct.len == 0 or finding.why.len == 0 or finding.example.len == 0) {
+        std.debug.print("lint finding '{s}' ({s}): construct/why/example must all be non-empty\n", .{ name, finding.rule });
+        return error.TestUnexpectedResult;
+    }
+    if (finding.detail.len == 0) {
+        std.debug.print("lint finding '{s}' ({s}): empty detail\n", .{ name, finding.rule });
+        return error.TestUnexpectedResult;
+    }
+}
+
+test "lint: error fixtures produce teaching findings" {
+    var failures: usize = 0;
+    for (error_cases) |c| {
+        // The rule map must cover every error fixture: a new fixture without
+        // an entry fails here instead of silently passing as data-dependent.
+        const expected = for (err_lint_rules) |m| {
+            if (std.mem.eql(u8, m.name, c.name)) break m.rule;
+        } else {
+            std.debug.print("error fixture '{s}' has no err_lint_rules entry\n", .{c.name});
+            failures += 1;
+            continue;
+        };
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        var d = kt.Diagnostic{};
+        const findings = kt.lintDocument(arena_state.allocator(), c.template, &d) catch |e| {
+            std.debug.print("error fixture '{s}': lint failed: {s}\n", .{ c.name, @errorName(e) });
+            failures += 1;
+            continue;
+        };
+        if (expected) |rule| {
+            var matched = false;
+            for (findings) |f| {
+                if (std.mem.eql(u8, f.rule, rule)) {
+                    matched = true;
+                    expectTeaching(f, c.name) catch |e| {
+                        failures += 1;
+                        return e;
+                    };
+                }
+            }
+            if (!matched) {
+                std.debug.print("error fixture '{s}': expected lint rule '{s}', got {d} finding(s)", .{ c.name, rule, findings.len });
+                for (findings) |f| std.debug.print(" [{s}]", .{f.rule});
+                std.debug.print("\n", .{});
+                failures += 1;
+            }
+        } else {
+            if (findings.len != 0) {
+                std.debug.print("error fixture '{s}': data-dependent, expected lint-clean, got {d} finding(s): {s}\n", .{ c.name, findings.len, findings[0].rule });
+                failures += 1;
+            }
+        }
+    }
+    try assertTextileDialect();
+    try testing.expectEqual(@as(usize, 0), failures);
+}
+
+test "lint: lint fixtures map to their rules" {
+    var failures: usize = 0;
+    for (lint_broken) |c| {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        var d = kt.Diagnostic{};
+        const findings = kt.lintDocument(arena_state.allocator(), c.template, &d) catch |e| {
+            std.debug.print("lint fixture '{s}': lint failed: {s}\n", .{ c.name, @errorName(e) });
+            failures += 1;
+            continue;
+        };
+        var matched = false;
+        for (findings) |f| {
+            if (std.mem.eql(u8, f.rule, c.rule)) {
+                matched = true;
+                expectTeaching(f, c.name) catch |e| {
+                    failures += 1;
+                    return e;
+                };
+            }
+        }
+        if (!matched) {
+            std.debug.print("lint fixture '{s}': expected lint rule '{s}', got {d} finding(s)", .{ c.name, c.rule, findings.len });
+            for (findings) |f| std.debug.print(" [{s}]", .{f.rule});
+            std.debug.print("\n", .{});
+            failures += 1;
+        }
+    }
+    try assertTextileDialect();
+    try testing.expectEqual(@as(usize, 0), failures);
+}
+
+test "lint: the fixture corpus lints clean" {
+    var failures: usize = 0;
+    for (cases) |c| {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        var d = kt.Diagnostic{};
+        const findings = kt.lintDocument(arena_state.allocator(), c.template, &d) catch |e| {
+            std.debug.print("fixture '{s}': lint failed: {s}\n", .{ c.name, @errorName(e) });
+            failures += 1;
+            continue;
+        };
+        if (findings.len != 0) {
+            std.debug.print("fixture '{s}': expected lint-clean, got {d} finding(s)\n", .{ c.name, findings.len });
+            for (findings) |f| std.debug.print("  {s}: {s}\n", .{ f.rule, f.detail });
+            failures += 1;
+        }
+    }
+    try assertTextileDialect();
+    try testing.expectEqual(@as(usize, 0), failures);
+}
+
+test "lint: an empty template is clean" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    var d = kt.Diagnostic{};
+    const findings = try kt.lintDocument(arena_state.allocator(), "", &d);
+    try testing.expectEqual(@as(usize, 0), findings.len);
+    try assertTextileDialect();
+}
+
+test "lint: a parse failure carries position and teaching text" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    var d = kt.Diagnostic{};
+    const findings = try kt.lintDocument(arena_state.allocator(), "pre\n{% if x %}oops", &d);
+    try testing.expectEqual(@as(usize, 1), findings.len);
+    try testing.expectEqualStrings("unclosed-if", findings[0].rule);
+    try testing.expectEqual(@as(u32, 2), findings[0].line);
+    try testing.expectEqual(@as(u32, 1), findings[0].column);
+    try testing.expect(findings[0].construct.len > 0);
+    try testing.expect(findings[0].why.len > 0);
+    try testing.expect(findings[0].example.len > 0);
+    try assertTextileDialect();
+}
+
+test "lint: registry walk reports unknown filter and arity in one pass" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    var d = kt.Diagnostic{};
+    const findings = try kt.lintDocument(
+        arena_state.allocator(),
+        "{{ a | nope }} {{ b | bold:7 }} {{ c | link }}",
+        &d,
+    );
+    try testing.expectEqual(@as(usize, 3), findings.len);
+    try testing.expectEqualStrings("unknown-filter", findings[0].rule);
+    try testing.expectEqualStrings("filter-arg-unexpected", findings[1].rule);
+    try testing.expectEqualStrings("link-missing-url", findings[2].rule);
+    try assertTextileDialect();
+}
+
+test "lint: paren nesting beyond the limit is a finding" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(testing.allocator);
+    try buf.appendSlice(testing.allocator, "{% if ");
+    for (0..33) |_| try buf.appendSlice(testing.allocator, "(");
+    try buf.appendSlice(testing.allocator, "a");
+    for (0..33) |_| try buf.appendSlice(testing.allocator, ")");
+    try buf.appendSlice(testing.allocator, " %}x{% endif %}");
+    var d = kt.Diagnostic{};
+    const findings = try kt.lintDocument(arena_state.allocator(), buf.items, &d);
+    try testing.expectEqual(@as(usize, 1), findings.len);
+    try testing.expectEqualStrings("paren-too-deep", findings[0].rule);
+    try assertTextileDialect();
 }
 
 test "property: every registry filter has at least one fixture case" {

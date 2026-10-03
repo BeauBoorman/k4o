@@ -37,6 +37,8 @@ zig-out/bin/k4o render template.knap --data data.json
 zig-out/bin/k4o render template.knap --data=data.json
 zig-out/bin/k4o render template.knap --data=data.json --format markdown
 zig-out/bin/k4o render template.knap --data=data.json --format gfm
+zig-out/bin/k4o lint template.knap
+zig-out/bin/k4o lint one.knap two.knap
 zig-out/bin/k4o --help
 zig-out/bin/k4o --version
 ```
@@ -210,6 +212,48 @@ trips the instant the limit is crossed instead of after the allocator is
 exhausted — a small cap fails in milliseconds where the old behaviour took
 seconds to produce hundreds of megabytes first.
 
+## k4o lint
+
+`k4o lint` checks templates against the documented subset and teaches the
+fix. Knap is new to training data, so agents hallucinate it; lint closes the
+loop — write, verify, fix — with education-grade diagnostics: every finding
+names the offending construct, states the rule, and shows an example of
+right. Verify and educate in one binary, over one parser.
+
+```sh
+zig-out/bin/k4o lint template.knap
+zig-out/bin/k4o lint one.knap two.knap three.knap
+```
+
+A broken template prints a finding per problem and exits 1:
+
+```text
+broken.knap:1:1: syntax error: unclosed if block (missing '{% endif %}')
+  construct: `{% if %}` block
+  why: every {% if %} needs a matching {% endif %}; branches inside come from {% elseif %} and {% else %}
+  example: {% if draft %}Draft{% else %}Published{% endif %}
+
+k4o lint: 1 problem(s) in 1 of 1 file(s)
+```
+
+- **One parser, no drift.** lint reuses k4o's parser and filter registry, so
+  a construct either renders or lints — never both, never neither. There is
+  no standalone lint binary and no second frontend to maintain.
+- **Stable exit codes.** `0` when every file is clean, `1` when any file has
+  findings or cannot be read. Findings go to stdout.
+- **Static scope.** lint checks what is knowable without data: template
+  syntax, the 15-filter registry, argument arity, and the `link` URL rules
+  that a literal argument already violates. Data-dependent failures (a loop
+  over a non-array, a ragged table) are render errors and stay with
+  `k4o render`.
+- **Rules have ids.** `unclosed-if`, `unknown-filter`, `link-scheme`,
+  `bracket-key`, … — stable identifiers the test suite pins per fixture, so
+  a parser message can never drift away from its teaching text unnoticed.
+- **Fixture contract.** the clean corpus (`fixtures/*.knap`,
+  `examples/*.knap`) lints clean; the broken set (`fixtures/errors/*.knap`
+  and the dedicated `fixtures/lint/*.knap` rules) is rejected with the
+  expected rule named. `tools/verify.sh` asserts both on every run.
+
 ## Filter registry → output formats
 
 This is the complete registry (15 names). The fixture corpus pins all three
@@ -354,9 +398,9 @@ locally with `tools/verify.sh --update-readme`.
 <!-- verify-table:start -->
 | Mode | Result |
 | --- | --- |
-| `normal` | 50 passed, 0 failed |
-| `passthrough` | 0 passed, 50 failed |
-| `markdown` | 0 passed, 50 failed |
+| `normal` | 57 passed, 0 failed |
+| `passthrough` | 0 passed, 57 failed |
+| `markdown` | 0 passed, 57 failed |
 <!-- verify-table:end -->
 
 CI runs builds and tests on Linux and macOS at Zig 0.16.0. The verification
@@ -367,8 +411,10 @@ Every test re-asserts Textile-specific syntax (`h1. `, `bq. `, `*bold*`,
 passthrough output nor Markdown emission can satisfy it.
 
 `tools/verify.sh` runs all of the above plus CLI smoke checks (the three
-examples compared byte-for-byte; error paths exit 1 with empty stdout) and a
-static cross-build check (`-Dtarget=x86_64-linux-musl`, verified with
+examples compared byte-for-byte; error paths exit 1 with empty stdout), lint
+smoke checks (the clean corpus lints clean; broken templates are rejected
+with the expected teaching rule) and a static cross-build check
+(`-Dtarget=x86_64-linux-musl`, verified with
 `file(1)` as "statically linked"; the macOS host build links the system libc,
 which is a platform constraint).
 
