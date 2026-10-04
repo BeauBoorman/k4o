@@ -444,9 +444,9 @@ locally with `tools/verify.sh --update-readme`.
 <!-- verify-table:start -->
 | Mode | Result |
 | --- | --- |
-| `normal` | 71 passed, 0 failed |
-| `passthrough` | 0 passed, 71 failed |
-| `markdown` | 0 passed, 71 failed |
+| `normal` | 75 passed, 0 failed |
+| `passthrough` | 0 passed, 75 failed |
+| `markdown` | 0 passed, 75 failed |
 <!-- verify-table:end -->
 
 CI runs builds and tests on Linux and macOS at Zig 0.16.0. The verification
