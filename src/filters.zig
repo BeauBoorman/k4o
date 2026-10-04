@@ -131,6 +131,8 @@ pub fn apply(
             return failRender(alloc, d, template, call.offset, "filter 'codeblock' expects a text value, but got {s}", .{typeName(input)});
         const out = if (format != .textile)
             try codeFence(alloc, text)
+        else if (hasContentAfterBlankLine(text))
+            try std.fmt.allocPrint(alloc, "bc.. {s}", .{text})
         else
             try std.fmt.allocPrint(alloc, "bc. {s}", .{text});
         return .{ .string = out };
@@ -395,6 +397,33 @@ fn codeFence(alloc: std.mem.Allocator, text: []const u8) error{OutOfMemory}![]u8
     const ticks = try repeatChar(alloc, '`', @max(@as(usize, 3), longestRun(text, '`') + 1));
     const separator = if (text.len == 0 or std.mem.endsWith(u8, text, "\n")) "" else "\n";
     return std.fmt.allocPrint(alloc, "{s}\n{s}{s}{s}", .{ ticks, text, separator, ticks });
+}
+
+/// True when `text` has a blank line — a line holding only spaces, tabs or
+/// carriage returns — followed by non-whitespace content. A single-block
+/// `bc. ` signature "ends with a blank line" (textile-spec, Block
+/// quotations), so the tail would reach the downstream parser as ordinary
+/// Textile; only that shape needs the extended `bc..` signature, which holds
+/// until the next block signature or EOF. Content whose blank lines trail
+/// into nothing survives the single form, so it keeps emitting it.
+fn hasContentAfterBlankLine(text: []const u8) bool {
+    var rest = text;
+    while (std.mem.indexOfScalar(u8, rest, '\n')) |nl| {
+        const line = rest[0..nl];
+        rest = rest[nl + 1 ..];
+        if (!isBlankLine(line)) continue;
+        for (rest) |c| {
+            if (c != ' ' and c != '\t' and c != '\r' and c != '\n') return true;
+        }
+    }
+    return false;
+}
+
+fn isBlankLine(line: []const u8) bool {
+    for (line) |c| {
+        if (c != ' ' and c != '\t' and c != '\r') return false;
+    }
+    return true;
 }
 
 fn longestRun(text: []const u8, char: u8) usize {

@@ -1,4 +1,4 @@
-<!-- k4o init knap-gotchas v2 -->
+<!-- k4o init knap-gotchas v3 -->
 # knap gotchas
 
 The sharp edges, in order of how often they bite. Everything here is
@@ -68,6 +68,16 @@ representation — so `{% if a == 2 %}` is true for both `2` and `2.0`.
 `h1`–`h6`, `bold`, `italic`, `code`, `blockquote`, `link` require
 single-line text; a value with a newline is a render error. Use `codeblock`
 for multiline content.
+
+## Codeblock content with blank lines emits `bc..`
+
+Textile's single-block `bc.` signature ends at the first blank line, so
+`codeblock` content with a blank line and more content after it is emitted
+with the extended `bc..` signature instead — that form holds until the next
+block signature or the end of input, keeping the tail inside the code block.
+The same rule means template text directly after such a code block is
+absorbed into it unless that text starts with a block signature
+(`p. `, `h2. `, `bq. `, …). Content without blank lines keeps `bc. `.
 
 ## Lists and tables need arrays
 

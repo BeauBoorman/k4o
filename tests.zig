@@ -43,6 +43,7 @@ const cases = [_]Case{
     .{ .name = "filter-code-basic", .template = @embedFile("fixtures/filter-code-basic.knap"), .data = @embedFile("fixtures/filter-code-basic.json"), .expected = @embedFile("fixtures/filter-code-basic.textile") },
     .{ .name = "filter-blockquote-basic", .template = @embedFile("fixtures/filter-blockquote-basic.knap"), .data = @embedFile("fixtures/filter-blockquote-basic.json"), .expected = @embedFile("fixtures/filter-blockquote-basic.textile") },
     .{ .name = "filter-codeblock-basic", .template = @embedFile("fixtures/filter-codeblock-basic.knap"), .data = @embedFile("fixtures/filter-codeblock-basic.json"), .expected = @embedFile("fixtures/filter-codeblock-basic.textile") },
+    .{ .name = "filter-codeblock-blank-lines", .template = @embedFile("fixtures/filter-codeblock-blank-lines.knap"), .data = @embedFile("fixtures/filter-codeblock-blank-lines.json"), .expected = @embedFile("fixtures/filter-codeblock-blank-lines.textile") },
     .{ .name = "filter-link-basic", .template = @embedFile("fixtures/filter-link-basic.knap"), .data = @embedFile("fixtures/filter-link-basic.json"), .expected = @embedFile("fixtures/filter-link-basic.textile") },
     .{ .name = "filter-link-data-arg", .template = @embedFile("fixtures/filter-link-data-arg.knap"), .data = @embedFile("fixtures/filter-link-data-arg.json"), .expected = @embedFile("fixtures/filter-link-data-arg.textile") },
     .{ .name = "filter-link-literal-arg", .template = @embedFile("fixtures/filter-link-literal-arg.knap"), .data = @embedFile("fixtures/filter-link-literal-arg.json"), .expected = @embedFile("fixtures/filter-link-literal-arg.textile") },
@@ -450,6 +451,36 @@ test "unit: code fences preserve empty content and terminal newlines" {
         .{ "{\"text\":\"```\\nx\"}", "````\n```\nx\n````", "bc. ```\nx" },
         .{ "{\"text\":\"x\\n```\\n\"}", "````\nx\n```\n````", "bc. x\n```\n" },
         .{ "{\"text\":\"`````\\nx\\n```\\n\\n\"}", "``````\n`````\nx\n```\n\n``````", "bc. `````\nx\n```\n\n" },
+    };
+    inline for (samples) |sample| {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const data = try std.json.parseFromSliceLeaky(std.json.Value, arena, sample[0], .{});
+        var d = kt.Diagnostic{};
+        for ([_]kt.Format{ .markdown, .gfm }) |format| {
+            const out = try kt.renderFormat(arena, "{{ text | codeblock }}", data, &d, format);
+            try testing.expectEqualStrings(sample[1], out);
+        }
+        const textile = try kt.renderFormat(arena, "{{ text | codeblock }}", data, &d, .textile);
+        try testing.expectEqualStrings(sample[2], textile);
+    }
+    try assertTextileDialect();
+}
+
+test "unit: blank-line codeblock content uses the extended Textile signature" {
+    // A single-block `bc. ` ends at the first blank line, so content with an
+    // interior blank line would leak its tail to the downstream Textile
+    // parser as ordinary markup (issue #40). The extended `bc.. ` signature
+    // holds until the next block signature or EOF; blank lines that trail
+    // into nothing leak nothing and keep the single form.
+    const samples = .{
+        .{ "{\"text\":\"line one\\nline two\\n\\nline four after blank\"}", "```\nline one\nline two\n\nline four after blank\n```", "bc.. line one\nline two\n\nline four after blank" },
+        .{ "{\"text\":\"\\n\\nline two\"}", "```\n\n\nline two\n```", "bc.. \n\nline two" },
+        .{ "{\"text\":\"x\\n \\ny\"}", "```\nx\n \ny\n```", "bc.. x\n \ny" },
+        .{ "{\"text\":\"x\\n\\n  \\ny\"}", "```\nx\n\n  \ny\n```", "bc.. x\n\n  \ny" },
+        .{ "{\"text\":\"x\\n\\n\\n\"}", "```\nx\n\n\n```", "bc. x\n\n\n" },
+        .{ "{\"text\":\"x\\n \\n\"}", "```\nx\n \n```", "bc. x\n \n" },
     };
     inline for (samples) |sample| {
         var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
@@ -942,7 +973,7 @@ test "init: parseMarker accepts the marker shape and rejects junk" {
 test "init: decide covers the whole decision table" {
     const def = kt.init.files[0];
     try testing.expectEqual(kt.init.Decision.create, kt.init.decide(false, null, def));
-    try testing.expectEqual(kt.init.Decision.up_to_date, kt.init.decide(true, .{ .name = "knap-tour", .version = 1 }, def));
+    try testing.expectEqual(kt.init.Decision.up_to_date, kt.init.decide(true, .{ .name = "knap-tour", .version = def.version }, def));
     try testing.expectEqual(kt.init.Decision.archive_and_write, kt.init.decide(true, .{ .name = "knap-tour", .version = 0 }, def));
     // No marker, foreign marker, or newer version: never touched.
     try testing.expectEqual(kt.init.Decision.left_untouched, kt.init.decide(true, null, def));
