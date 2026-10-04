@@ -1060,6 +1060,115 @@ test "init: a newer marker than this build ships is left untouched" {
     try assertTextileDialect();
 }
 
+test "init: same-second supersessions preserve every archived copy" {
+    const io = std.testing.io;
+    var name_buf: [64]u8 = undefined;
+    var td = try makeInitTempDir(&name_buf);
+    defer std.Io.Dir.cwd().deleteTree(io, td.name) catch {};
+    defer td.dir.close(io);
+    var dir = td.dir;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Three supersessions pinned to one timestamp. Every archived copy is
+    // distinct, so a clobber would visibly destroy an earlier original.
+    const stamp = "20260101T000000Z";
+    const copies = [_][]const u8{
+        "<!-- k4o init knap-tour v0 -->\nfirst\n",
+        "<!-- k4o init knap-tour v0 -->\nsecond\n",
+        "<!-- k4o init knap-tour v0 -->\nthird\n",
+    };
+    for (copies, 0..) |bytes, i| {
+        try dir.writeFile(io, .{ .sub_path = "knap-tour.md", .data = bytes });
+        const path = try kt.init.archiveFileWithStamp(arena, io, dir, "knap-tour.md", stamp);
+        // The reported path must name the real destination, suffix and all.
+        const sub_dir = if (i == 0)
+            stamp
+        else
+            try std.fmt.allocPrint(arena, "{s}-{d}", .{ stamp, i + 1 });
+        const want = try std.fmt.allocPrint(arena, "k4o-archive/{s}/knap-tour.md", .{sub_dir});
+        try testing.expectEqualStrings(want, path);
+        const archived = try dir.readFileAlloc(io, path, arena, .limited(1 << 20));
+        try testing.expectEqualStrings(bytes, archived);
+    }
+    try assertTextileDialect();
+}
+
+test "init: preexisting archive files are never overwritten" {
+    const io = std.testing.io;
+    var name_buf: [64]u8 = undefined;
+    var td = try makeInitTempDir(&name_buf);
+    defer std.Io.Dir.cwd().deleteTree(io, td.name) catch {};
+    defer td.dir.close(io);
+    var dir = td.dir;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const stamp = "20260101T000000Z";
+    const preexisting = "preexisting archived bytes\n";
+    try dir.createDirPath(io, "k4o-archive/20260101T000000Z");
+    try dir.writeFile(io, .{ .sub_path = "k4o-archive/20260101T000000Z/knap-tour.md", .data = preexisting });
+    const v0_bytes = "<!-- k4o init knap-tour v0 -->\n# old tour\n";
+    try dir.writeFile(io, .{ .sub_path = "knap-tour.md", .data = v0_bytes });
+
+    const path = try kt.init.archiveFileWithStamp(arena, io, dir, "knap-tour.md", stamp);
+    try testing.expectEqualStrings("k4o-archive/20260101T000000Z-2/knap-tour.md", path);
+    try testing.expectEqualStrings(preexisting, try dir.readFileAlloc(io, "k4o-archive/20260101T000000Z/knap-tour.md", arena, .limited(1 << 20)));
+    try testing.expectEqualStrings(v0_bytes, try dir.readFileAlloc(io, path, arena, .limited(1 << 20)));
+    try assertTextileDialect();
+}
+
+test "init: a failed archive does not destroy the source" {
+    const io = std.testing.io;
+    var name_buf: [64]u8 = undefined;
+    var td = try makeInitTempDir(&name_buf);
+    defer std.Io.Dir.cwd().deleteTree(io, td.name) catch {};
+    defer td.dir.close(io);
+    var dir = td.dir;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const stamp = "20260101T000000Z";
+    const v0_bytes = "<!-- k4o init knap-tour v0 -->\n# old tour\n";
+    try dir.writeFile(io, .{ .sub_path = "knap-tour.md", .data = v0_bytes });
+    // A regular file where the archive root belongs fails the path creation
+    // before anything is reserved or renamed.
+    try dir.writeFile(io, .{ .sub_path = "k4o-archive", .data = "not a directory\n" });
+
+    try testing.expectError(error.NotDir, kt.init.archiveFileWithStamp(arena, io, dir, "knap-tour.md", stamp));
+    try testing.expectEqualStrings(v0_bytes, try dir.readFileAlloc(io, "knap-tour.md", arena, .limited(1 << 20)));
+    try testing.expectEqualStrings("not a directory\n", try dir.readFileAlloc(io, "k4o-archive", arena, .limited(1 << 20)));
+    try assertTextileDialect();
+}
+
+test "init: a failed rename leaves the source intact and no placeholder" {
+    const io = std.testing.io;
+    var name_buf: [64]u8 = undefined;
+    var td = try makeInitTempDir(&name_buf);
+    defer std.Io.Dir.cwd().deleteTree(io, td.name) catch {};
+    defer td.dir.close(io);
+    var dir = td.dir;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const stamp = "20260101T000000Z";
+    // The source is a directory, so the exclusive reservation of the
+    // destination succeeds but the rename can never replace the placeholder
+    // with it: a deterministic rename failure.
+    try dir.createDirPath(io, "src-dir");
+    try dir.writeFile(io, .{ .sub_path = "src-dir/keep.txt", .data = "keep\n" });
+
+    try testing.expectError(error.NotDir, kt.init.archiveFileWithStamp(arena, io, dir, "src-dir", stamp));
+    try testing.expectEqualStrings("keep\n", try dir.readFileAlloc(io, "src-dir/keep.txt", arena, .limited(1 << 20)));
+    // The failed reservation is cleaned up, leaving no empty archive stub.
+    try testing.expectError(error.FileNotFound, dir.statFile(io, "k4o-archive/20260101T000000Z/src-dir", .{}));
+    try assertTextileDialect();
+}
+
 test "property: every registry filter has at least one fixture case" {
     var buf: [64]u8 = undefined;
     for (kt.filters.registry()) |entry| {

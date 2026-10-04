@@ -111,7 +111,8 @@ pub const ScaffoldError = error{
 } || std.Io.Dir.ReadFileError ||
     std.Io.Dir.WriteFileError ||
     std.Io.Dir.CreateDirPathError ||
-    std.Io.Dir.RenameError;
+    std.Io.Dir.RenameError ||
+    std.Io.File.OpenError;
 
 /// Applies the teaching-file set to `dir`, appending one Report per file.
 /// Idempotent: running twice changes nothing; superseded files are archived
@@ -169,18 +170,40 @@ fn archiveFile(
 ) ScaffoldError![]const u8 {
     var stamp_buf: [40]u8 = undefined;
     const stamp = try utcStamp(io, &stamp_buf);
+    return archiveFileWithStamp(alloc, io, dir, name, stamp);
+}
+
+/// Archives `name` under an explicit `YYYYMMDDTHHMMSSZ` stamp — the
+/// injection point that makes the collision tests deterministic. The
+/// destination is claimed with an exclusive create, which fails with
+/// `PathAlreadyExists` instead of replacing, so a collision retries with
+/// the next suffix and no archived byte is ever overwritten: the rename
+/// can only ever replace the empty placeholder this call just reserved.
+/// On failure the source is untouched and no placeholder is left behind.
+pub fn archiveFileWithStamp(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    dir: std.Io.Dir,
+    name: []const u8,
+    stamp: []const u8,
+) ScaffoldError![]const u8 {
     var suffix: usize = 1;
     while (suffix < 100) : (suffix += 1) {
         const sub_dir = if (suffix == 1)
             try std.fmt.allocPrint(alloc, archive_dir_name ++ "/{s}", .{stamp})
         else
             try std.fmt.allocPrint(alloc, archive_dir_name ++ "/{s}-{d}", .{ stamp, suffix });
-        dir.createDirPath(io, sub_dir) catch |e| switch (e) {
+        try dir.createDirPath(io, sub_dir);
+        const target = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ sub_dir, name });
+        const reserved = dir.createFile(io, target, .{ .exclusive = true }) catch |e| switch (e) {
             error.PathAlreadyExists => continue,
             else => return e,
         };
-        const target = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ sub_dir, name });
-        try dir.rename(name, dir, target, io);
+        reserved.close(io);
+        dir.rename(name, dir, target, io) catch |e| {
+            dir.deleteFile(io, target) catch {}; // our own empty reservation
+            return e;
+        };
         return target;
     }
     return error.ArchiveCollision;
