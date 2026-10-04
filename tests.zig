@@ -1296,6 +1296,15 @@ test "unit: float and integer rendering" {
     try renderOk("{{ a }} {{ b }}", "{\"a\":2.0,\"b\":1.5}", "2 1.5");
 }
 
+test "unit: numeric equality does not distinguish 2 from 2.0" {
+    // Pins the knap-gotchas float example: interpolation emits both as "2",
+    // and `==` compares the numeric value, not the representation.
+    try renderOk("{% if a == 2 %}same{% else %}different{% endif %}", "{\"a\":2}", "same");
+    try renderOk("{% if a == 2 %}same{% else %}different{% endif %}", "{\"a\":2.0}", "same");
+    try renderOk("{{ a }}", "{\"a\":2}", "2");
+    try renderOk("{{ a }}", "{\"a\":2.0}", "2");
+}
+
 test "unit: three-filter chain" {
     try renderOk("{{ \"n\" | code | bold | h2 }}", "{}", "h2. *@n@*");
 }

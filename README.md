@@ -133,9 +133,11 @@ Reach for the field you want rather than the container: `{{ data.k }}` renders
 escape hatch, not the recommended way to emit prose.
 
 Floats are the one place where interpolation is lossy: `{"a":2.0}` renders as
-`2`, so a float and an integer are indistinguishable in the output. Use
-`{{ a }}` for display and compare with `==` when the distinction matters —
-`{% if a == 2 %}` is true for both `2` and `2.0`.
+`2`, so scalar interpolation emits a whole-number float and the equal integer
+as the same bytes. Use `{{ a }}` for display, and do not reach for `==` to
+recover the distinction: numeric equality compares the numeric value, not the
+integer/float representation, so `{% if a == 2 %}` is true for both `2` and
+`2.0`.
 
 ### Filter arguments
 
@@ -444,9 +446,9 @@ locally with `tools/verify.sh --update-readme`.
 <!-- verify-table:start -->
 | Mode | Result |
 | --- | --- |
-| `normal` | 75 passed, 0 failed |
-| `passthrough` | 0 passed, 75 failed |
-| `markdown` | 0 passed, 75 failed |
+| `normal` | 76 passed, 0 failed |
+| `passthrough` | 0 passed, 76 failed |
+| `markdown` | 0 passed, 76 failed |
 <!-- verify-table:end -->
 
 CI runs builds and tests on Linux and macOS at Zig 0.16.0. The verification
