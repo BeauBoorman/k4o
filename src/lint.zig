@@ -183,12 +183,12 @@ fn classifyParseFailure(d: *diag.Diagnostic) Finding {
             .why = "blocks close in the order they opened: an {% if %} opened inside a for loop must close before the loop's {% endfor %}",
             .example = "{% for x in xs %}{% if ok %}{{ x }}{% endif %}{% endfor %}",
         };
-    } else if (endsWith(detail, "tag inside a for block")) {
+    } else if (endsWith(detail, "inside a for block")) {
         teaching = .{
             .rule = "tag-inside-for",
             .construct = "block nesting",
-            .why = "an {% if %} opened inside a for loop must close with {% endif %} before the loop's {% endfor %}",
-            .example = "{% for x in xs %}{% if ok %}{{ x }}{% endif %}{% endfor %}",
+            .why = "elseif, else and endif close an {% if %} from outside: the {% for %} opened after it must close with {% endfor %} first",
+            .example = "{% if a %}{% for x in xs %}{{ x }}{% endfor %}{% endif %}",
         };
     } else if (eql(detail, "expected a filter name after '|'")) {
         teaching = .{
@@ -422,8 +422,8 @@ fn checkLinkArg(
                 .column = pos.column,
                 .detail = "filter 'link' URL must not contain whitespace or a double quote",
                 .construct = "`link` filter URL",
-                .why = "whitespace and double quotes break the Textile link form; percent-encode them or move the URL into the data and pass it as a bare word",
-                .example = "{{ name | link:\"https://example.com/post\" }}",
+                .why = "whitespace and double quotes break the Textile link form; percent-encode them (a space becomes %20) or choose a URL that needs neither",
+                .example = "{{ name | link:\"https://example.com/my%20post\" }}",
             });
             return;
         }
