@@ -125,6 +125,14 @@ const Parser = struct {
     src: []const u8,
     diag: *diag.Diagnostic,
     i: usize = 0,
+    /// Modes of the parseSeq frames currently open, outermost first. When a
+    /// closing tag is rejected this tells crossed nesting apart from a
+    /// genuinely unmatched tag: in `{% for %}{% if %}{% endfor %}` the
+    /// endfor fails because an if is in the way, not because no for is open.
+    /// parseSeq nests once per block and depth is capped at max_depth, so
+    /// the fixed array cannot overflow.
+    modes: [max_depth + 1]Mode = undefined,
+    mode_depth: usize = 0,
 
     fn errAt(
         p: *Parser,
@@ -136,6 +144,18 @@ const Parser = struct {
         return diag.fail(p.alloc, p.diag, kind, p.src, offset, fmt, args);
     }
 
+    /// True when a frame with mode `m` is open outside the innermost frame.
+    /// The innermost frame is the sequence rejecting the closing tag, and its
+    /// mode is exactly the one the tag failed to match, so it can never be
+    /// `m` itself — any hit is a block the tag would have to reach across.
+    fn isOpen(p: *const Parser, m: Mode) bool {
+        var i: usize = 0;
+        while (i + 1 < p.mode_depth) : (i += 1) {
+            if (p.modes[i] == m) return true;
+        }
+        return false;
+    }
+
     fn makeCond(p: *Parser, c: Cond) Error!*Cond {
         const ptr = try p.alloc.create(Cond);
         ptr.* = c;
@@ -143,6 +163,10 @@ const Parser = struct {
     }
 
     fn parseSeq(p: *Parser, mode: Mode, depth: usize) Error!SeqResult {
+        p.modes[p.mode_depth] = mode;
+        p.mode_depth += 1;
+        defer p.mode_depth -= 1;
+
         var nodes = std.ArrayList(Node).empty;
         errdefer nodes.deinit(p.alloc);
 
@@ -283,19 +307,31 @@ const Parser = struct {
             }
         }
         if (std.mem.eql(u8, keyword, "elseif")) {
-            if (mode != .branch) return q.err("unexpected '{{% elseif %}}' outside an if block", .{});
+            if (mode != .branch) {
+                if (p.isOpen(.branch)) return q.err("unexpected '{{% elseif %}}' inside a for block", .{});
+                return q.err("unexpected '{{% elseif %}}' outside an if block", .{});
+            }
             return .{ .terminated = .{ .end = .elseif, .content = content, .content_offset = content_offset } };
         }
         if (std.mem.eql(u8, keyword, "else")) {
-            if (mode != .branch) return q.err("unexpected '{{% else %}}' outside an if block", .{});
+            if (mode != .branch) {
+                if (p.isOpen(.branch)) return q.err("unexpected '{{% else %}}' inside a for block", .{});
+                return q.err("unexpected '{{% else %}}' outside an if block", .{});
+            }
             return .{ .terminated = .{ .end = .else_, .content = content, .content_offset = content_offset } };
         }
         if (std.mem.eql(u8, keyword, "endif")) {
-            if (mode != .branch) return q.err("unexpected '{{% endif %}}' outside an if block", .{});
+            if (mode != .branch) {
+                if (p.isOpen(.branch)) return q.err("unexpected '{{% endif %}}' inside a for block", .{});
+                return q.err("unexpected '{{% endif %}}' outside an if block", .{});
+            }
             return .{ .terminated = .{ .end = .endif, .content = content, .content_offset = content_offset } };
         }
         if (std.mem.eql(u8, keyword, "endfor")) {
-            if (mode != .loop_body) return q.err("unexpected '{{% endfor %}}' outside a for block", .{});
+            if (mode != .loop_body) {
+                if (p.isOpen(.loop_body)) return q.err("unexpected '{{% endfor %}}' inside an if block", .{});
+                return q.err("unexpected '{{% endfor %}}' outside a for block", .{});
+            }
             return .{ .terminated = .{ .end = .endfor, .content = content, .content_offset = content_offset } };
         }
         return q.err("unknown logic tag '{s}'", .{keyword});

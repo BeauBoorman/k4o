@@ -104,6 +104,7 @@ const error_cases = [_]ErrorCase{
     .{ .name = "err-loop-nonarray", .template = @embedFile("fixtures/errors/err-loop-nonarray.knap"), .data = @embedFile("fixtures/errors/err-loop-nonarray.json"), .message = @embedFile("fixtures/errors/err-loop-nonarray.error") },
     .{ .name = "err-if-missing-value", .template = @embedFile("fixtures/errors/err-if-missing-value.knap"), .message = @embedFile("fixtures/errors/err-if-missing-value.error") },
     .{ .name = "err-stray-endif", .template = @embedFile("fixtures/errors/err-stray-endif.knap"), .message = @embedFile("fixtures/errors/err-stray-endif.error") },
+    .{ .name = "err-stray-endfor", .template = @embedFile("fixtures/errors/err-stray-endfor.knap"), .message = @embedFile("fixtures/errors/err-stray-endfor.error") },
     .{ .name = "err-nesting-too-deep", .template = @embedFile("fixtures/errors/err-nesting-too-deep.knap"), .message = @embedFile("fixtures/errors/err-nesting-too-deep.error") },
 };
 
@@ -578,6 +579,7 @@ const err_lint_rules = [_]struct { name: []const u8, rule: ?[]const u8 }{
     .{ .name = "err-loop-nonarray", .rule = null },
     .{ .name = "err-if-missing-value", .rule = "missing-value" },
     .{ .name = "err-stray-endif", .rule = "misplaced-closing-tag" },
+    .{ .name = "err-stray-endfor", .rule = "misplaced-closing-tag" },
     .{ .name = "err-nesting-too-deep", .rule = "nesting-too-deep" },
 };
 
@@ -600,6 +602,8 @@ const lint_broken = [_]struct { name: []const u8, template: []const u8, rule: []
     .{ .name = "empty-logic-tag", .template = @embedFile("fixtures/lint/empty-logic-tag.knap"), .rule = "empty-logic-tag" },
     .{ .name = "missing-value", .template = @embedFile("fixtures/lint/missing-value.knap"), .rule = "missing-value" },
     .{ .name = "link-url-text", .template = @embedFile("fixtures/lint/link-url-text.knap"), .rule = "link-url-text" },
+    .{ .name = "endfor-inside-if", .template = @embedFile("fixtures/lint/endfor-inside-if.knap"), .rule = "endfor-inside-if" },
+    .{ .name = "tag-inside-for", .template = @embedFile("fixtures/lint/tag-inside-for.knap"), .rule = "tag-inside-for" },
 };
 
 fn expectTeaching(finding: kt.Finding, name: []const u8) !void {
@@ -735,6 +739,102 @@ test "lint: a parse failure carries position and teaching text" {
     try testing.expect(findings[0].construct.len > 0);
     try testing.expect(findings[0].why.len > 0);
     try testing.expect(findings[0].example.len > 0);
+    try assertTextileDialect();
+}
+
+test "lint: crossed endfor inside an open if teaches block ordering" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    var d = kt.Diagnostic{};
+    const findings = try kt.lintDocument(
+        arena_state.allocator(),
+        "{% for x in xs %}{% if a %}{{ x }}{% endfor %}",
+        &d,
+    );
+    try testing.expectEqual(@as(usize, 1), findings.len);
+    try testing.expectEqualStrings("endfor-inside-if", findings[0].rule);
+    try testing.expectEqualStrings(
+        "blocks close in the order they opened: an {% if %} opened inside a for loop must close before the loop's {% endfor %}",
+        findings[0].why,
+    );
+    try testing.expectEqualStrings("{% for x in xs %}{% if ok %}{{ x }}{% endif %}{% endfor %}", findings[0].example);
+    // Render rejects the same crossing with the same message.
+    try renderErr("{% for x in xs %}{% if a %}{{ x }}{% endfor %}", "{}", "unexpected '{% endfor %}' inside an if block");
+    try assertTextileDialect();
+}
+
+test "lint: crossed endif inside an open for teaches block ordering" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    var d = kt.Diagnostic{};
+    const findings = try kt.lintDocument(
+        arena_state.allocator(),
+        "{% if a %}{% for x in xs %}{{ x }}{% endif %}",
+        &d,
+    );
+    try testing.expectEqual(@as(usize, 1), findings.len);
+    try testing.expectEqualStrings("tag-inside-for", findings[0].rule);
+    try testing.expectEqualStrings(
+        "elseif, else and endif close an {% if %} from outside: the {% for %} opened after it must close with {% endfor %} first",
+        findings[0].why,
+    );
+    try testing.expectEqualStrings("{% if a %}{% for x in xs %}{{ x }}{% endfor %}{% endif %}", findings[0].example);
+    // The other if-chain tags crossing a loop body map to the same rule.
+    const findings_else = try kt.lintDocument(arena_state.allocator(), "{% if a %}{% for x in xs %}{% else %}", &d);
+    try testing.expectEqual(@as(usize, 1), findings_else.len);
+    try testing.expectEqualStrings("tag-inside-for", findings_else[0].rule);
+    // Render rejects the crossing with the same message.
+    try renderErr("{% if a %}{% for x in xs %}{{ x }}{% endif %}", "{}", "unexpected '{% endif %}' inside a for block");
+    try assertTextileDialect();
+}
+
+test "lint: a closing tag with no matching block anywhere stays misplaced" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    var d = kt.Diagnostic{};
+    // An if is open, but no for ever was: endfor is stray, not crossed.
+    const endfor = try kt.lintDocument(arena_state.allocator(), "{% if a %}{% endfor %}", &d);
+    try testing.expectEqual(@as(usize, 1), endfor.len);
+    try testing.expectEqualStrings("misplaced-closing-tag", endfor[0].rule);
+    // A for is open, but no if ever was: endif is stray, not crossed.
+    const endif = try kt.lintDocument(arena_state.allocator(), "{% for x in xs %}{% endif %}", &d);
+    try testing.expectEqual(@as(usize, 1), endif.len);
+    try testing.expectEqualStrings("misplaced-closing-tag", endif[0].rule);
+    // Both blocks already closed in valid order: the second endfor is stray.
+    const closed = try kt.lintDocument(arena_state.allocator(), "{% for x in xs %}{% if a %}{% endif %}{% endfor %}{% endfor %}", &d);
+    try testing.expectEqual(@as(usize, 1), closed.len);
+    try testing.expectEqualStrings("misplaced-closing-tag", closed[0].rule);
+    try assertTextileDialect();
+}
+
+test "lint: link-url-text teaches percent-encoding, not data" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var d = kt.Diagnostic{};
+    const findings = try kt.lintDocument(arena, "{{ name | link:\"has space\" }}", &d);
+    try testing.expectEqual(@as(usize, 1), findings.len);
+    try testing.expectEqualStrings("link-url-text", findings[0].rule);
+    // The repair is percent-encoding (or picking a URL without the offending
+    // characters). Moving the same URL into data must not reappear as advice:
+    // it only hides the problem from lint, and render still rejects it.
+    try testing.expect(std.mem.indexOf(u8, findings[0].why, "percent-encode") != null);
+    try testing.expect(std.mem.indexOf(u8, findings[0].why, "into the data") == null);
+    try testing.expect(std.mem.indexOf(u8, findings[0].why, "bare word") == null);
+    // The illustrated repair is one the renderer accepts.
+    const out = try renderCase(arena, findings[0].example, "{\"name\":\"n\"}", &d);
+    try testing.expectEqualStrings("\"n\":https://example.com/my%20post", out);
+    try assertTextileDialect();
+}
+
+test "lint: a link URL only available at render time stays outside lint" {
+    // The documented static boundary: a bare word resolves from data at
+    // render time, so lint cannot call it invalid either way.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    var d = kt.Diagnostic{};
+    const findings = try kt.lintDocument(arena_state.allocator(), "{{ name | link:u }}", &d);
+    try testing.expectEqual(@as(usize, 0), findings.len);
     try assertTextileDialect();
 }
 
@@ -1235,6 +1335,34 @@ test "unit: blocked link schemes are rejected case-insensitively" {
 
 test "unit: a blocked scheme reaching link through the data is rejected" {
     try renderErr("{{ name | link:url }}", "{\"name\":\"c\",\"url\":\"javascript:alert(1)\"}", "which can execute script");
+}
+
+test "unit: a percent-encoded link URL renders" {
+    try renderOk("{{ name | link:\"has%20space\" }}", "{\"name\":\"n\"}", "\"n\":has%20space");
+    try renderOk("{{ name | link:\"say%22hi%22\" }}", "{\"name\":\"n\"}", "\"n\":say%22hi%22");
+}
+
+test "unit: an invalid link URL supplied through data still fails to render" {
+    // The URL the lint diagnostic used to send into data: the renderer's
+    // whitespace/quote check applies to the resolved value either way.
+    try renderErr("{{ name | link:u }}", "{\"name\":\"n\",\"u\":\"has space\"}", "filter 'link' URL must not contain whitespace or a double quote");
+    try renderErr("{{ name | link:u }}", "{\"name\":\"n\",\"u\":\"has\\\"quote\"}", "filter 'link' URL must not contain whitespace or a double quote");
+}
+
+test "unit: the crossing repairs render and correctly nested blocks lint clean" {
+    const repairs = [_][]const u8{
+        "{% for x in xs %}{% if a %}{{ x }}{% endif %}{% endfor %}",
+        "{% if a %}{% for x in xs %}{{ x }}{% endfor %}{% endif %}",
+    };
+    for (repairs) |tpl| {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        var d = kt.Diagnostic{};
+        const findings = try kt.lintDocument(arena_state.allocator(), tpl, &d);
+        try testing.expectEqual(@as(usize, 0), findings.len);
+    }
+    try renderOk(repairs[0], "{\"xs\":[\"p\",\"q\"],\"a\":true}", "pq");
+    try renderOk(repairs[1], "{\"xs\":[\"p\",\"q\"],\"a\":true}", "pq");
 }
 
 test "unit: nested loops that would multiply hit the output cap" {
