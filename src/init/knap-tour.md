@@ -1,4 +1,4 @@
-<!-- k4o init knap-tour v1 -->
+<!-- k4o init knap-tour v2 -->
 # knap in one page
 
 Knap is a template language: template + JSON data in, Markdown-family text
@@ -49,7 +49,7 @@ The complete filter registry (15 names — there are no others):
 | `bold` | none | `*watch out*` |
 | `italic` | none | `_very_` |
 | `code` | none | `@zig build@` |
-| `codeblock` | none | `bc. ` + content |
+| `codeblock` | none | `bc. ` + content (`bc.. ` across blank lines) |
 | `blockquote` | none | `bq. Quote` |
 | `link` | URL (required) | `"Example":https://example.com/` |
 | `list` | none | `* item` (nested `**`) |

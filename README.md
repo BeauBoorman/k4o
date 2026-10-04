@@ -316,7 +316,7 @@ The GFM format changes only that row of the registry.
 | `bold` | — | `*watch out*` | `**watch out**` |
 | `italic` | — | `_very_` | `*very*` |
 | `code` | — | `@zig build@` | `` `zig build` `` (adaptive backtick delimiter) |
-| `codeblock` | — | `bc. ` + content | fenced code block (adaptive fence) |
+| `codeblock` | — | `bc. ` + content; `bc.. ` when content has a blank line | fenced code block (adaptive fence) |
 | `blockquote` | — | `bq. Quote` | `> Quote` |
 | `link` | URL (required) | `"Example":https://example.com/` | `[Example](https://example.com/)` |
 | `list` | — | `* item`; nested `**`/`***` | `- item`; nested tab-indented lists |
@@ -329,8 +329,16 @@ Other nonempty code retains its boundary spaces and backticks, including
 `" a "`; it is not trimmed to match knap. `codeblock` preserves every existing
 terminal newline. Nonempty content without a terminal newline needs one before
 the closing fence, so its parsed code content ends in one newline. Empty
-content produces an empty fenced block, not a blank code line. Textile emission
-is unchanged.
+content produces an empty fenced block, not a blank code line.
+
+In Textile, `codeblock` emits `bc. ` + content. A single-block signature ends
+at the first blank line, so content with a blank line followed by more content
+is emitted with the extended `bc.. ` signature instead — it holds across blank
+lines until the next block signature or the end of input, and the tail stays
+inside the code block instead of being re-parsed downstream. The extended form
+absorbs whatever follows it until that boundary, so template text directly
+after such a code block needs its own block signature (`p. `, `h2. `, …).
+Blank lines that trail into nothing leak nothing, and keep the single form.
 
 Error conditions (all produce a message with kind, line, and column):
 
@@ -399,8 +407,9 @@ knap 0.6.0 no-argument table form:
 
 (The emitted table form is byte-identical to the textile-spec `page_layout`
 table example input, and the other emitted forms — `h1. `, `bq. `, `* item`,
-`# item`, `"text":url`, `@code@`, `bc. ` — follow the phrase-modifier and
-block-signature forms in the same specification.)
+`# item`, `"text":url`, `@code@`, `bc. `, and `bc.. ` after the same spec's
+extended-block rule — follow the phrase-modifier and block-signature forms in
+the same specification.)
 
 ## What's out (an honest subset)
 
@@ -446,9 +455,9 @@ locally with `tools/verify.sh --update-readme`.
 <!-- verify-table:start -->
 | Mode | Result |
 | --- | --- |
-| `normal` | 76 passed, 0 failed |
-| `passthrough` | 0 passed, 76 failed |
-| `markdown` | 0 passed, 76 failed |
+| `normal` | 77 passed, 0 failed |
+| `passthrough` | 0 passed, 77 failed |
+| `markdown` | 0 passed, 77 failed |
 <!-- verify-table:end -->
 
 CI runs builds and tests on Linux and macOS at Zig 0.16.0. The verification
@@ -484,7 +493,7 @@ HTML tables. Raw HTML is rejected for non-table cases. CI builds Oliver at
 `a45aa5ede557ea7cf7de727bdba61c1f80af544b`.
 
 **Full byte parity with knap is not possible without changing existing k4o
-template semantics.** The harness explicitly enumerates 11 existing fixtures
+template semantics.** The harness explicitly enumerates 12 existing fixtures
 outside that shared subset in
 `EXCLUDED_FIXTURES` and still checks their Markdown bytes and Oliver parse.
 The conflicts are:

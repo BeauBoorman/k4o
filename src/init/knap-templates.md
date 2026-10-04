@@ -1,4 +1,4 @@
-<!-- k4o init knap-templates v1 -->
+<!-- k4o init knap-templates v2 -->
 # knap starter templates
 
 Copy one, replace the data keys, verify with `k4o lint`, render with
@@ -120,4 +120,7 @@ The bare word `url` resolves against the top-level data key; quote it
 ```
 
 Content keeps every existing newline; a missing terminal newline gets one
-before the closing fence. For inline code use `{{ "k4o render" | code }}`.
+before the closing fence. Content with a blank line is emitted with Textile's
+extended `bc..` signature so it stays one block downstream — template text
+right after it then needs its own block signature. For inline code use
+`{{ "k4o render" | code }}`.
