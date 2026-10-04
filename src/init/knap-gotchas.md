@@ -1,4 +1,4 @@
-<!-- k4o init knap-gotchas v1 -->
+<!-- k4o init knap-gotchas v2 -->
 # knap gotchas
 
 The sharp edges, in order of how often they bite. Everything here is
@@ -56,11 +56,12 @@ on two numbers or two strings only — anything else is simply not ordered.
 `{{ data }}` with an object or array emits compact JSON, key order
 preserved from the input. Reach for the field instead: `{{ data.k }}`.
 
-## Floats are lossy in output
+## Floats are lossy
 
-`{"a":2.0}` renders as `2` — a float and an integer are indistinguishable
-in the output. They are still distinguishable in comparisons: `{% if a == 2 %}`
-is true for both.
+`{"a":2.0}` renders as `2`: scalar interpolation emits a whole-number float
+and the equal integer as the same bytes. Numeric equality does not recover
+the distinction — it compares the numeric value, not the integer/float
+representation — so `{% if a == 2 %}` is true for both `2` and `2.0`.
 
 ## Phrase filters take one line
 
