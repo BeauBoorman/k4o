@@ -493,7 +493,7 @@ HTML tables. Raw HTML is rejected for non-table cases. CI builds Oliver at
 `a45aa5ede557ea7cf7de727bdba61c1f80af544b`.
 
 **Full byte parity with knap is not possible without changing existing k4o
-template semantics.** The harness explicitly enumerates 11 existing fixtures
+template semantics.** The harness explicitly enumerates 12 existing fixtures
 outside that shared subset in
 `EXCLUDED_FIXTURES` and still checks their Markdown bytes and Oliver parse.
 The conflicts are:

@@ -21,6 +21,7 @@ TIMEOUT = 8
 # checked against .markdown and parsed by Oliver. Tables use opt-in GFM parity.
 EXCLUDED_FIXTURES = {
     "fixtures/filter-codeblock-basic": "Knap has code_block, not k4o's codeblock filter",
+    "fixtures/filter-codeblock-blank-lines": "Knap has code_block, not k4o's codeblock filter",
     "fixtures/filter-numbered-basic": "Knap has list:numbered, not k4o's numbered filter",
     "fixtures/filter-numbered-nested": "Knap has list:numbered, not k4o's numbered filter",
     "fixtures/filter-link-basic": "Knap takes URL as input and label as argument; k4o does the reverse",
@@ -167,8 +168,12 @@ def check_commonmark(name, markdown, oliver, required=None):
         assert tags.names.count("ol") >= 2, f"{name}: nested ordered list not nested in {html!r}"
     if name.endswith("chain-h2-italic"):
         assert "<h2><em>" in html, f"{name}: heading/emphasis chain not parsed: {html!r}"
-    if name.endswith("codeblock-basic"):
+    if name.endswith("codeblock-basic") or name.endswith("codeblock-blank-lines"):
         assert "<pre><code>" in html, f"{name}: fenced block not parsed: {html!r}"
+    if name.endswith("codeblock-blank-lines"):
+        assert "line two\n\nline four after blank" in html, (
+            f"{name}: blank line or tail lost from the block: {html!r}"
+        )
     if name.endswith("link-basic"):
         assert '<a href="https://example.com/">' in html, f"{name}: link target lost: {html!r}"
     return html
@@ -185,7 +190,7 @@ def run(k4o, knap, oliver):
     fixture_paths = sorted([*ROOT.glob("fixtures/*.knap"), *ROOT.glob("examples/*.knap")])
     fixture_names = {str(path.relative_to(ROOT).with_suffix("")) for path in fixture_paths}
     assert EXCLUDED_FIXTURES.keys() <= fixture_names, "stale fixture exclusions"
-    assert len(EXCLUDED_FIXTURES) == 11, "expected 11 documented fixture incompatibilities"
+    assert len(EXCLUDED_FIXTURES) == 12, "expected 12 documented fixture incompatibilities"
     assert GFM_FIXTURES <= fixture_names and not GFM_FIXTURES & EXCLUDED_FIXTURES.keys(), (
         "stale or excluded GFM parity fixtures"
     )
