@@ -85,10 +85,6 @@ jobs:
     # suite has stopped discriminating, which fails the build here.
     name: verify
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        zig: ["0.17.0"]
     env:
       KT_VERIFY_DIR: ${{ github.workspace }}/verify-logs
     steps:
@@ -97,7 +93,7 @@ jobs:
       - name: Install Zig
         uses: drawmeanelephant/zig-zouave@2d8510d62b517fa786279562cf8b1bdcf0c47b9f
         with:
-          version: ${{ matrix.zig }}
+          version: "0.17.0"
 
       - name: zig version
         run: zig version
@@ -109,7 +105,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: verify-logs-zig-${{ matrix.zig }}
+          name: verify-logs
           path: verify-logs/
           if-no-files-found: ignore
           retention-days: 7
