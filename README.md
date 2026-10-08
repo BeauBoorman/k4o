@@ -22,7 +22,7 @@ template.knap + data.json ──> k4o ──> Textile or CommonMark ──> Oliv
 
 ## Build, run, test
 
-Requires Zig 0.16.0.
+Requires Zig 0.17.0.
 
 ```sh
 zig build                       # binary -> zig-out/bin/k4o
@@ -460,7 +460,7 @@ locally with `tools/verify.sh --update-readme`.
 | `markdown` | 0 passed, 77 failed |
 <!-- verify-table:end -->
 
-CI runs builds and tests on Linux and macOS at Zig 0.16.0. The verification
+CI runs builds and tests on Linux and macOS at Zig 0.17.0. The verification
 job runs on Linux; the counts are platform-independent.
 
 Every test re-asserts Textile-specific syntax (`h1. `, `bq. `, `*bold*`,
@@ -561,7 +561,7 @@ Sources consulted (with pinned revisions; fetched 2026-09-29):
 | | | `attributes.yaml` | `03a2428dfe1e49ae72edd2efb4528d924245b3cabe03ddbea8620900bfc4dfa5` |
 | | | `html.yaml` | `b3643c21becc2702891618bca1fe1efbca6558062c9cc07660edd4e931ce72f3` |
 
-Zig 0.16 standard library documentation (local toolchain) was used for
+Zig 0.17 standard library documentation (local toolchain) was used for
 language and library APIs only.
 
 ## Rollback / uninstall
