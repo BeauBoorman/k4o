@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build-test:
-    name: build + test (${{ matrix.os }}, Zig ${{ matrix.zig }})
+    name: build + test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -83,7 +83,7 @@ jobs:
     # smoke tests and static cross-build must pass, and README's generated
     # results table must match this run. A mutant that starts passing means the
     # suite has stopped discriminating, which fails the build here.
-    name: verify (Zig ${{ matrix.zig }})
+    name: verify
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
