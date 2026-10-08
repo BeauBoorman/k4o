@@ -41,7 +41,7 @@ embeds this library.
 
 ## Build / test / gates
 
-Requires Zig 0.16.0 (CI pins it).
+Requires Zig 0.17.0 (CI pins it).
 
 ```sh
 zig build            # binary -> zig-out/bin/k4o

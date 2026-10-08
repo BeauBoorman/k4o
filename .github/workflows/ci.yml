@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        zig: ["0.16.0"]
+        zig: ["0.17.0"]
     steps:
       - uses: actions/checkout@v7
 
@@ -58,7 +58,7 @@ jobs:
       - name: Install Zig
         uses: drawmeanelephant/zig-zouave@2d8510d62b517fa786279562cf8b1bdcf0c47b9f
         with:
-          version: 0.16.0
+          version: 0.17.0
 
       - uses: actions/setup-node@v6
         with:
@@ -70,7 +70,7 @@ jobs:
       - name: Build pinned Oliver
         run: |
           git clone --filter=blob:none https://github.com/drawmeanelephant/oliver.git "$RUNNER_TEMP/oliver"
-          git -C "$RUNNER_TEMP/oliver" checkout --detach a45aa5ede557ea7cf7de727bdba61c1f80af544b
+          git -C "$RUNNER_TEMP/oliver" checkout --detach 2a0a1e90d2e259e4189940d16b3907e8a82196b1
           (cd "$RUNNER_TEMP/oliver" && zig build -Doptimize=ReleaseSafe --prefix "$RUNNER_TEMP/oliver-install")
 
       - name: Compare bytes and parse CommonMark
@@ -88,7 +88,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        zig: ["0.16.0"]
+        zig: ["0.17.0"]
     env:
       KT_VERIFY_DIR: ${{ github.workspace }}/verify-logs
     steps:
