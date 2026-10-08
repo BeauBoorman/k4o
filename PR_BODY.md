@@ -46,7 +46,9 @@ Verified against: `&#106;avascript:`, `&#x6a;avascript:`, `&#X6A;avascript:`,
 `&#100;ata:`, `&#118;bscript:`, entity payloads via data-provided URLs, and
 the negatives — `https://…?a=1&b=2` passes, an entity payload **inside a
 query string** of an `https` URL passes (scheme position is `https`),
-semicolon-less `&#106avascript` stays literal per CommonMark §6.2.
+semicolon-less `&#106avascript` stays literal per CommonMark §6.2. The
+escaping also matches the knap 0.6.0 oracle, which emits `&amp;` in link
+destinations the same way.
 
 ## Behavior change summary
 
@@ -81,19 +83,38 @@ destinations containing `&` (the new `&amp;` escaping, byte-pinned).
 
 ## Verification
 
-Zig 0.16.0 (`/tmp/zig-aarch64-macos-0.16.0/zig`):
+Zig 0.16.0 (`/tmp/zig-aarch64-macos-0.16.0/zig`, per the task) and zig 0.17.0
+(CI-pinned; `build.zig.zon` sets `minimum_zig_version = 0.17.0`):
 
 ```
-zig build test                                  # 84 pass, 0 fail (84 total)
+zig build test                                  # 84 pass, 0 fail (84 total), both versions
 zig build test -Dengine-mode=passthrough        # 0 pass, 84 fail — 0 survivors
 zig build test -Dengine-mode=markdown           # 0 pass, 84 fail — 0 survivors
 zig build test -Doptimize=ReleaseSafe           # all pass
-tools/verify.sh --check-readme                  # 37 passed, 0 failed
+zig build -Dtarget=x86_64-linux-musl            # statically linked
+python3 tools/differential/run.py --oliver …    # 232 cases: 75 byte-identical to knap 0.6.0,
+                                                #  14 documented incompatibilities, Oliver-clean
 ```
 
-README results table regenerated via `tools/verify.sh --update-readme`
-(77 → 84 total). Manual CLI checks: every repro exits 1 with an empty stdout
-and the diagnostic on stderr.
+`tools/verify.sh --check-readme` passes 37/37. README results table regenerated
+via `--update-readme` (77 → 84 total). Manual CLI checks: every repro exits 1
+with an empty stdout and the diagnostic on stderr.
+
+### Differential note (new fixtures)
+
+The two new corpus fixtures are byte-pinned against k4o and parsed by Oliver,
+but excluded from byte parity with the knap 0.6.0 oracle, joining the existing
+12 documented incompatibilities (14 total, asserted by the harness):
+
+- `var-float-large`: knap renders extreme floats in exponent notation
+  (`1e+308`) where k4o's subset expands decimal (309 digits).
+- `logic-cond-depth-boundary`: knap's own `maxDepth` rejects 256-level
+  conditions (`LIMIT_EXCEEDED`), below the depth k4o documents and supports.
+
+Verified red/green: without the exclusions the differential job fails
+(knap `LIMIT_EXCEEDED`); with them it passes. Notably, knap 0.6.0 itself
+emits `&amp;` in link destinations — the new `&` escaping matches the oracle's
+behavior.
 
 Closes the three crash bugs and the `out of memory` misreport from #42. The
 issue's "Minor" items (usage text for lint/init, init archive-retry empty
